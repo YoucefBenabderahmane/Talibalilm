@@ -609,6 +609,8 @@
     "newCourse": "Nouveau module",
     "courseTitle": "Titre du module",
     "subtitle": "Sous-titre",
+    "moduleSchedule": "Horaires de module",
+    "moduleScheduleHint": "Affiché sur la page du module, sous le sous-titre. Deux lignes possibles, par exemple un horaire en semaine et un le week-end.",
     "description": "Description",
     "titleAr": "Titre en arabe",
     "status": "Statut",

@@ -609,6 +609,8 @@
     "newCourse": "New module",
     "courseTitle": "Module title",
     "subtitle": "Subtitle",
+    "moduleSchedule": "Module timetable",
+    "moduleScheduleHint": "Shown on the module page, under the subtitle. Two lines allowed, for example a weekday slot and a weekend one.",
     "description": "Description",
     "titleAr": "Arabic title",
     "status": "Status",
