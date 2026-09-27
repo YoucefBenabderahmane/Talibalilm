@@ -149,11 +149,31 @@ function SlideStage({
   const container = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
+  /** What the page box holds while it is being typed in. */
+  const [draft, setDraft] = useState(String(index + 1));
 
   // A zoom belongs to the page it was made on. The next page opens fitted.
   useEffect(() => {
     setView({ scale: 1, x: 0, y: 0 });
   }, [src]);
+
+  // The box follows the deck: paging with the arrows or the keyboard updates
+  // it, and typing never fights that because it only changes while unfocused
+  // in practice — the value is committed on Enter or on leaving the field.
+  useEffect(() => {
+    setDraft(String(index + 1));
+  }, [index]);
+
+  const commitPage = () => {
+    const parsed = Number(draft);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      setDraft(String(index + 1));
+      return;
+    }
+    const target = Math.min(total, Math.max(1, Math.round(parsed))) - 1;
+    setDraft(String(target + 1));
+    if (target !== index) onGo(target);
+  };
 
   useEffect(() => {
     const element = container.current;
@@ -218,8 +238,9 @@ function SlideStage({
       onPointerDown={(event) => {
         if (view.scale <= 1) return;
         // The pager and the reset control live inside the zoom surface; a drag
-        // started on one of them would capture the pointer and swallow its click.
-        if ((event.target as HTMLElement).closest('button')) return;
+        // started on one of them would capture the pointer and swallow its
+        // click, or the caret in the page box.
+        if ((event.target as HTMLElement).closest('button, input')) return;
         event.currentTarget.setPointerCapture(event.pointerId);
         drag.current = { x: event.clientX, y: event.clientY, panX: view.x, panY: view.y };
       }}
@@ -272,11 +293,26 @@ function SlideStage({
             <ChevronLeft className="size-4" aria-hidden="true" />
             <span className="sr-only">{t('slidePrev')}</span>
           </button>
-          <span
-            className="min-w-14 text-center text-[12px] tabular-nums"
-            aria-label={t('slidePage', { current: index + 1, total })}
-          >
-            {index + 1} / {total}
+          {/* A page box rather than a label: a teacher with a 150-page deck
+              should be able to type the page the class is on, not press an
+              arrow seventy times. */}
+          <span className="flex items-center gap-1 text-[12px] tabular-nums">
+            <input
+              value={draft}
+              onChange={(event) => setDraft(event.target.value.replace(/[^0-9]/g, '').slice(0, 3))}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur();
+                if (event.key === 'Escape') {
+                  setDraft(String(index + 1));
+                  event.currentTarget.blur();
+                }
+              }}
+              onBlur={commitPage}
+              inputMode="numeric"
+              aria-label={t('slidePage', { current: index + 1, total })}
+              className="w-10 rounded bg-white/10 px-1 py-0.5 text-center text-white outline-none transition-colors focus:bg-white/20"
+            />
+            <span className="text-white/60">/ {total}</span>
           </span>
           <button
             type="button"
