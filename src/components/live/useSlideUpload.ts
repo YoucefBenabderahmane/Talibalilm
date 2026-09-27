@@ -1,8 +1,9 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
-import { confirmSlide, requestSlideUpload } from '@/app/actions/slides';
+import { confirmSlides, requestSlideUploads } from '@/app/actions/slides';
 import { MAX_IMAGE_BYTES } from '@/lib/media/image';
+import { runPool } from '@/lib/media/pool';
 import { classifyUpload } from '@/lib/media/upload-kind';
 import { PdfError } from '@/lib/media/pdf';
 
@@ -17,6 +18,13 @@ import { PdfError } from '@/lib/media/pdf';
  * is deliberate and it is where the whole design holds together — the server
  * still only ever accepts a PNG, JPEG or WebP, so the byte sniffing and the
  * database constraints did not have to be relaxed to gain a feature.
+ *
+ * A large deck is the case this is built around. Pages are uploaded as they
+ * are rendered, several PUTs are in flight at once, and each group of pages is
+ * signed and confirmed in ONE server round trip — a hundred-page PDF used to
+ * cost two hundred of them before a byte moved. Conversion and upload overlap,
+ * so the first slide is on screen while the rest of the deck is still being
+ * drawn, and memory holds a couple of pages rather than all of them.
  */
 export interface SlideUploadState {
   /** Files currently in flight, and which page of a PDF is being converted. */
@@ -46,6 +54,13 @@ export interface SlideUploadHandlers {
   onAdded?: (slide: { id: string; url: string | null; filename: string }, index: number) => void;
 }
 
+/** Pages signed and confirmed in one round trip. */
+const BATCH = 12;
+/** PUTs in flight at once. Wider saturates a home uplink; narrower wastes it. */
+const PUTS = 4;
+/** Batches queued or running before the renderer is made to wait. Bounds memory. */
+const MAX_PENDING_BATCHES = 2;
+
 export function useSlideUpload(
   sessionId: string,
   handlers: SlideUploadHandlers = {},
@@ -62,66 +77,137 @@ export function useSlideUpload(
   const onAddedRef = useRef(handlers.onAdded);
   onAddedRef.current = handlers.onAdded;
 
-  const putOne = useCallback(
-    async (file: File): Promise<{ id: string; url: string | null; filename: string } | null> => {
-      try {
-        if (file.size > MAX_IMAGE_BYTES) {
-          setError('tooLarge');
-          return null;
-        }
-        const ticket = await requestSlideUpload({
-          sessionId,
-          contentType: file.type,
-          byteSize: file.size,
-        });
-        if (!ticket.ok || !ticket.url || !ticket.key) {
-          setError(ticket.error ?? 'uploadFailed');
-          return null;
-        }
-
-        const put = await fetch(ticket.url, {
-          method: 'PUT',
-          body: file,
-          headers: { 'Content-Type': ticket.contentType ?? file.type },
-        });
-        if (!put.ok) {
-          setError('uploadFailed');
-          return null;
-        }
-
-        const done = await confirmSlide({ sessionId, key: ticket.key, filename: file.name });
-        if (!done.ok || !done.slide) {
-          setError(done.error ?? 'uploadFailed');
-          return null;
-        }
-        addedRef.current = true;
-        return done.slide;
-      } catch (thrown) {
-        // A rejected fetch — a CORS refusal, a dropped connection — arrives
-        // with no status and only the browser's own words. This is an UPLOAD
-        // failure; without this catch it escaped to the PDF branch, which
-        // relabelled it "conversion failed" and sent the office to the wrong
-        // problem. The origin is included because a bucket's CORS rule is
-        // written against exactly that string.
-        setError('uploadFailed');
-        setDetail(
-          `${
-            thrown instanceof Error ? `${thrown.name}: ${thrown.message}` : String(thrown)
-          } (origine ${window.location.origin})`,
-        );
-        return null;
-      }
-    },
-    [sessionId],
-  );
-
   const upload = useCallback(
     async (input: FileList | File[]) => {
       setError(null);
       setDetail(null);
       addedRef.current = false;
       const chosen = Array.from(input);
+      /** A batch of pages at a time, in order, across every file of this drop. */
       let added = 0;
+
+      const queue: File[] = [];
+      let chain: Promise<void> = Promise.resolve();
+      let pendingBatches = 0;
+
+      /**
+       * Sign, upload and confirm one batch.
+       *
+       * The slots array is what keeps the deck in page order: the PUTs finish
+       * in whatever order the network gives, and the confirm must not reorder
+       * the pages because of it.
+       */
+      const processBatchOnce = async (batch: File[]) => {
+        const tickets = await requestSlideUploads({
+          sessionId,
+          pages: batch.map((file) => ({ contentType: file.type, byteSize: file.size })),
+        });
+        if (!tickets.ok || !tickets.tickets || tickets.tickets.length === 0) {
+          setError(tickets.error ?? 'uploadFailed');
+          return;
+        }
+        if (tickets.skipped) setError('deckFull');
+
+        const accepted = batch.slice(0, tickets.tickets.length);
+        const slots: ({ key: string; filename: string } | null)[] = accepted.map(() => null);
+
+        await runPool(accepted, PUTS, async (file, index) => {
+          const ticket = tickets.tickets?.[index];
+          if (!ticket) return;
+          try {
+            const put = await fetch(ticket.url, {
+              method: 'PUT',
+              body: file,
+              headers: { 'Content-Type': ticket.contentType },
+            });
+            if (!put.ok) throw new Error(`HTTP ${put.status}`);
+            slots[index] = { key: ticket.key, filename: file.name };
+          } catch (thrown) {
+            // A rejected fetch — a CORS refusal, a dropped connection — arrives
+            // with no status and only the browser's own words. This is an
+            // UPLOAD failure; without this catch it escaped to the PDF branch,
+            // which relabelled it "conversion failed" and sent the office to
+            // the wrong problem. The origin is included because a bucket's CORS
+            // rule is written against exactly that string.
+            setError('uploadFailed');
+            setDetail(
+              `${
+                thrown instanceof Error ? `${thrown.name}: ${thrown.message}` : String(thrown)
+              } (origine ${window.location.origin})`,
+            );
+          }
+        });
+
+        const uploads = slots.filter(
+          (slot): slot is { key: string; filename: string } => slot !== null,
+        );
+        if (uploads.length === 0) return;
+
+        const done = await confirmSlides({ sessionId, uploads });
+        if (!done.ok || !done.slides) {
+          setError(done.error ?? 'uploadFailed');
+          if (done.detail) setDetail(done.detail);
+          return;
+        }
+        for (const slide of done.slides) onAddedRef.current?.(slide, added++);
+
+        const refused = done.failed?.[0];
+        if (refused) {
+          setError(refused.error);
+          if (refused.detail) setDetail(refused.detail);
+        }
+      };
+
+      /**
+       * Never let a batch reject the chain.
+       *
+       * A server action that cannot be reached at all — offline, a redeploy —
+       * throws rather than returning `{ ok: false }`. Left uncaught that skips
+       * every batch behind it in the chain and rejects a promise nobody awaits,
+       * which is a console warning instead of the sentence the teacher needs.
+       */
+      const processBatch = async (batch: File[]) => {
+        try {
+          await processBatchOnce(batch);
+        } catch (thrown) {
+          setError('uploadFailed');
+          setDetail(
+            thrown instanceof Error ? `${thrown.name}: ${thrown.message}` : String(thrown),
+          );
+        }
+      };
+
+      /**
+       * Hand a page over for upload, and let the render loop run ahead of it —
+       * up to a point. Returning the chain when the queue is deep is what
+       * applies backpressure: the engine waits for a batch to land rather than
+       * turning a hundred pages into a hundred megabytes of canvas.
+       */
+      const enqueue = (file: File): Promise<void> | void => {
+        if (file.size > MAX_IMAGE_BYTES) {
+          setError('tooLarge');
+          return;
+        }
+        queue.push(file);
+        if (queue.length >= BATCH) {
+          const batch = queue.splice(0, BATCH);
+          pendingBatches += 1;
+          chain = chain
+            .then(() => processBatch(batch))
+            .finally(() => {
+              pendingBatches -= 1;
+            });
+          if (pendingBatches >= MAX_PENDING_BATCHES) return chain;
+        }
+      };
+
+      const flush = () => {
+        if (queue.length > 0) {
+          const batch = queue.splice(0, queue.length);
+          chain = chain.then(() => processBatch(batch));
+        }
+        return chain;
+      };
 
       for (const file of chosen) {
         const kind = classifyUpload(file);
@@ -142,22 +228,15 @@ export function useSlideUpload(
         setBusy((n) => n + 1);
         try {
           if (kind === 'pdf') {
-            const { pdfToImages } = await import('@/lib/media/pdf');
-            const pages = await pdfToImages(file, {
+            const { pdfPages } = await import('@/lib/media/pdf');
+            const delivered = await pdfPages(file, {
               onProgress: (progress) => setConverting(progress),
+              onPage: (page) => enqueue(page.file),
             });
             setConverting(null);
-            if (pages.length === 0) {
-              setError('pdfEmpty');
-              continue;
-            }
-            for (const page of pages) {
-              const slide = await putOne(page);
-              if (slide) onAddedRef.current?.(slide, added++);
-            }
+            if (delivered === 0) setError('pdfEmpty');
           } else {
-            const slide = await putOne(file);
-            if (slide) onAddedRef.current?.(slide, added++);
+            enqueue(file);
           }
         } catch (thrown) {
           setConverting(null);
@@ -185,10 +264,11 @@ export function useSlideUpload(
         }
       }
 
-      // Nothing added, nothing to refresh.
+      // Whatever is left in the queue, then every batch that is still running.
+      await flush();
       if (addedRef.current) onDoneRef.current?.();
     },
-    [putOne],
+    [sessionId],
   );
 
   return {

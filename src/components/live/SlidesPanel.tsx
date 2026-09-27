@@ -32,6 +32,7 @@ export function SlidesPanel({
   canPresent,
   onGo,
   onRemove,
+  onClearAll,
   removeError,
   upload,
 }: {
@@ -41,6 +42,8 @@ export function SlidesPanel({
   onGo: (index: number) => void;
   /** The teacher's removal, mid-lesson. Resolves when the server has answered. */
   onRemove: (slideId: string) => Promise<void>;
+  /** Empty the whole deck — the teacher's, mid-lesson. */
+  onClearAll: () => Promise<void>;
   /** Why the last removal failed, if it did. */
   removeError: { error: string; detail?: string | null } | null;
   /** The room's upload state — one deck, one set of refusals. */
@@ -49,6 +52,7 @@ export function SlidesPanel({
   const t = useTranslations('live');
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
   const { busy, converting, error, detail, upload: uploadFiles } = upload;
 
   const remove = async (slide: { id: string }) => {
@@ -58,6 +62,16 @@ export function SlidesPanel({
       await onRemove(slide.id);
     } finally {
       setRemoving(null);
+    }
+  };
+
+  const clearAll = async () => {
+    if (!window.confirm(t('slidesClearConfirm', { count: slides.length }))) return;
+    setClearing(true);
+    try {
+      await onClearAll();
+    } finally {
+      setClearing(false);
     }
   };
 
@@ -153,6 +167,23 @@ export function SlidesPanel({
               >
                 <ChevronRight className="size-4" aria-hidden="true" />
                 <span className="sr-only">{t('slideNext')}</span>
+              </button>
+
+              {/* The whole deck at once: a teacher who uploaded the wrong PDF
+                  should not have to remove it page by page, mid-lesson. */}
+              <button
+                type="button"
+                onClick={() => void clearAll()}
+                disabled={clearing || removing !== null}
+                title={t('slidesClearAll')}
+                className="inline-flex size-8 items-center justify-center rounded-lg text-white/70 transition-colors hover:bg-red-600 hover:text-white disabled:opacity-40"
+              >
+                {clearing ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Trash2 className="size-4" aria-hidden="true" />
+                )}
+                <span className="sr-only">{t('slidesClearAll')}</span>
               </button>
             </div>
           )}
