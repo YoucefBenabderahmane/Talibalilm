@@ -1,7 +1,11 @@
 'use client';
 
+import { useEffect, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Track, type Participant, type Room } from 'livekit-client';
 import { cn } from '@/lib/utils';
+import { clampPan, nextZoom } from '@/lib/live/zoom';
 import { VideoTile } from './VideoTile';
 import type { RoomPerson } from './useRoom';
 
@@ -22,6 +26,10 @@ export function Stage({
   people,
   presenting,
   slide,
+  canPresent,
+  slideIndex,
+  slideTotal,
+  onGoSlide,
 }: {
   room: Room;
   people: RoomPerson[];
@@ -29,6 +37,11 @@ export function Stage({
   presenting: string | null;
   /** The current slide's image, when the teacher is presenting the deck. */
   slide: string | null;
+  /** The host alone gets the pager and the keyboard. */
+  canPresent: boolean;
+  slideIndex: number;
+  slideTotal: number;
+  onGoSlide: (index: number) => void;
 }) {
   const byIdentity = (identity: string): Participant | undefined =>
     identity === room.localParticipant.identity
@@ -50,8 +63,13 @@ export function Stage({
     <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
       <div className="relative min-h-0 flex-1 overflow-hidden rounded-2xl bg-black/30">
         {slide && !focusIsShare ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={slide} alt="" className="size-full object-contain" />
+          <SlideStage
+            src={slide}
+            canPresent={canPresent}
+            index={slideIndex}
+            total={slideTotal}
+            onGo={onGoSlide}
+          />
         ) : sharer ? (
           (() => {
             const p = byIdentity(sharer.identity);
@@ -96,6 +114,180 @@ export function Stage({
             );
           })}
         </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The slide itself, with the teacher's two reading aids.
+ *
+ * Zoom is per viewer and changes nothing for anyone else — a student reading a
+ * dense page can push in without moving the class. The wheel is registered by
+ * hand rather than through React because the page's own scroll has to be
+ * stopped, and a passive listener cannot do that.
+ *
+ * The pager is the host's alone, exactly like Zoom's presenter toolbar: the
+ * class follows the teacher's page through the same `slide` message the side
+ * panel already sends, so students need no controls and cannot take the lesson
+ * off course.
+ */
+function SlideStage({
+  src,
+  canPresent,
+  index,
+  total,
+  onGo,
+}: {
+  src: string;
+  canPresent: boolean;
+  index: number;
+  total: number;
+  onGo: (index: number) => void;
+}) {
+  const t = useTranslations('live');
+  const container = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
+
+  // A zoom belongs to the page it was made on. The next page opens fitted.
+  useEffect(() => {
+    setView({ scale: 1, x: 0, y: 0 });
+  }, [src]);
+
+  useEffect(() => {
+    const element = container.current;
+    if (!element) return;
+
+    const onWheel = (event: WheelEvent) => {
+      // Otherwise the panel or the page scrolls under the pointer while the
+      // teacher is trying to read a formula.
+      event.preventDefault();
+      const rect = element.getBoundingClientRect();
+      setView((current) => {
+        const scale = nextZoom(current.scale, event.deltaY);
+        if (scale === current.scale) return current;
+        // Keep the point under the pointer where it is: zooming about the
+        // centre means pushing in on a corner throws it off screen.
+        const factor = scale / current.scale;
+        const px = event.clientX - rect.left - rect.width / 2;
+        const py = event.clientY - rect.top - rect.height / 2;
+        const pan = clampPan(
+          { x: current.x * factor + px * (1 - factor), y: current.y * factor + py * (1 - factor) },
+          scale,
+          rect.width,
+          rect.height,
+        );
+        return { scale, x: pan.x, y: pan.y };
+      });
+    };
+
+    element.addEventListener('wheel', onWheel, { passive: false });
+    return () => element.removeEventListener('wheel', onWheel);
+  }, []);
+
+  // The host's keyboard, the way a presentation works everywhere else. Ignored
+  // while the teacher is typing in the chat or renaming the room.
+  useEffect(() => {
+    if (!canPresent) return;
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      ) {
+        return;
+      }
+      if (event.key === 'ArrowLeft' || event.key === 'PageUp') {
+        event.preventDefault();
+        onGo(Math.max(0, index - 1));
+      } else if (event.key === 'ArrowRight' || event.key === 'PageDown') {
+        event.preventDefault();
+        onGo(Math.min(total - 1, index + 1));
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [canPresent, index, total, onGo]);
+
+  return (
+    <div
+      ref={container}
+      className="relative size-full touch-none"
+      style={{ cursor: view.scale > 1 ? (drag.current ? 'grabbing' : 'grab') : 'default' }}
+      onPointerDown={(event) => {
+        if (view.scale <= 1) return;
+        // The pager and the reset control live inside the zoom surface; a drag
+        // started on one of them would capture the pointer and swallow its click.
+        if ((event.target as HTMLElement).closest('button')) return;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        drag.current = { x: event.clientX, y: event.clientY, panX: view.x, panY: view.y };
+      }}
+      onPointerMove={(event) => {
+        const start = drag.current;
+        if (!start) return;
+        const rect = event.currentTarget.getBoundingClientRect();
+        setView((current) => {
+          const pan = clampPan(
+            { x: start.panX + (event.clientX - start.x), y: start.panY + (event.clientY - start.y) },
+            current.scale,
+            rect.width,
+            rect.height,
+          );
+          return { ...current, x: pan.x, y: pan.y };
+        });
+      }}
+      onPointerUp={() => {
+        drag.current = null;
+      }}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element -- a signed URL that expires, and a transform the optimizer cannot carry */}
+      <img
+        src={src}
+        alt=""
+        draggable={false}
+        className="size-full object-contain select-none"
+        style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
+      />
+
+      {view.scale > 1 && (
+        <button
+          type="button"
+          onClick={() => setView({ scale: 1, x: 0, y: 0 })}
+          title={t('slideZoomReset')}
+          className="absolute end-3 top-3 rounded-full bg-ink/75 px-3 py-1 text-[11px] text-white/80 transition-colors hover:text-white"
+        >
+          {t('slideZoomReset')} · {Math.round(view.scale * 100)}%
+        </button>
+      )}
+
+      {canPresent && total > 1 && (
+        <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full bg-ink/75 px-1.5 py-1 text-white backdrop-blur">
+          <button
+            type="button"
+            onClick={() => onGo(Math.max(0, index - 1))}
+            disabled={index <= 0}
+            className="inline-flex size-7 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/10 disabled:opacity-30"
+          >
+            <ChevronLeft className="size-4" aria-hidden="true" />
+            <span className="sr-only">{t('slidePrev')}</span>
+          </button>
+          <span
+            className="min-w-14 text-center text-[12px] tabular-nums"
+            aria-label={t('slidePage', { current: index + 1, total })}
+          >
+            {index + 1} / {total}
+          </span>
+          <button
+            type="button"
+            onClick={() => onGo(Math.min(total - 1, index + 1))}
+            disabled={index >= total - 1}
+            className="inline-flex size-7 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/10 disabled:opacity-30"
+          >
+            <ChevronRight className="size-4" aria-hidden="true" />
+            <span className="sr-only">{t('slideNext')}</span>
+          </button>
+        </div>
       )}
     </div>
   );
