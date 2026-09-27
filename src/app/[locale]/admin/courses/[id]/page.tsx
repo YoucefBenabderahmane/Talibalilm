@@ -178,6 +178,7 @@ export default async function CourseBuilderPage({
                   title: course.title,
                   slug: course.slug,
                   subtitle: course.subtitle,
+                  schedule: course.schedule,
                   description: course.description,
                   title_ar: course.title_ar,
                   level: course.level,

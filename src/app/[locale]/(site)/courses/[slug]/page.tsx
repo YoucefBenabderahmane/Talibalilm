@@ -245,6 +245,15 @@ export default async function CoursePage({
             </p>
           )}
 
+          {/* When the module is taught, typed in the module builder under the
+              subtitle and shown in the same place here. */}
+          {course.schedule && (
+            <p className="mx-auto mt-3 flex max-w-2xl items-center justify-center gap-2 text-[13px] text-white/60">
+              <Clock className="size-3.5 shrink-0" aria-hidden="true" />
+              <span className="whitespace-pre-line">{course.schedule}</span>
+            </p>
+          )}
+
           <div className="mt-8 flex flex-wrap items-center justify-center gap-2">
             <Badge variant="soft">{t(`level.${course.level}`)}</Badge>
             <Badge variant="soft">{t(`format.${course.format}`)}</Badge>

@@ -19,6 +19,8 @@ export interface CourseSettings {
   title: string;
   slug: string;
   subtitle: string;
+  /** When the module is taught — shown on its public page, under the subtitle. */
+  schedule: string;
   description: string;
   title_ar: string;
   level: string;
@@ -72,6 +74,24 @@ export function CourseSettingsForm({
         dir="rtl"
       />
       <Field label={t('subtitle')} name="subtitle" defaultValue={course.subtitle} />
+
+      {/* Under the subtitle, and shown under it on the public page: when the
+          module is taught. Two lines are allowed for a module with two slots. */}
+      <label className="block">
+        <span className="mb-1.5 block text-[13px] font-medium text-ink">
+          {t('moduleSchedule')}
+        </span>
+        <textarea
+          name="schedule"
+          rows={2}
+          maxLength={200}
+          defaultValue={course.schedule}
+          className="w-full rounded-[var(--radius-input)] border border-line bg-white px-4 py-3 text-sm text-ink outline-none transition-colors focus:border-brand-400"
+        />
+        <span className="mt-1.5 block text-[11px] text-ink-muted">
+          {t('moduleScheduleHint')}
+        </span>
+      </label>
 
       <label className="block">
         <span className="mb-1.5 block text-[13px] font-medium text-ink">{t('description')}</span>
