@@ -9,7 +9,7 @@
  * Converting once, at upload, keeps the rule that a slide is an image, so the
  * byte sniffing, the database constraints and the student's page are untouched.
  *
- * Two things here are the result of this failing in production rather than of
+ * Three things here are the result of this failing in production rather than of
  * taste:
  *
  *   * The WORKER is constructed explicitly, as a module worker. pdf.js ships an
@@ -19,15 +19,23 @@
  *     the browser will not give us a module worker at all, we fall back to
  *     running on the main thread, which is slower and always works.
  *
+ *   * The ENGINE is the modern build first, the legacy build second. The legacy
+ *     build exists for browsers a year or two old and is measurably slower at
+ *     parsing and rendering; trying it second means a current browser gets the
+ *     fast path and an old one still gets slides.
+ *
+ *   * PAGES RENDER IN PARALLEL. One worker drawing a hundred pages in order is
+ *     the slowest part of a large deck, and it is CPU-bound — so the pages are
+ *     dealt to a small pool and a reorder buffer keeps the deck in page order
+ *     however the renders finish.
+ *
  *   * Errors are not flattened. A password, a corrupt file and a worker that
  *     would not start are three different problems with three different things
  *     for the teacher to do, and the caller is told which.
  */
 
 import type * as PdfJs from 'pdfjs-dist';
-
-/** Wide enough to read a dense slide full-screen, small enough to upload quickly. */
-const TARGET_WIDTH = 1600;
+import { PageReorder, pdfTargetWidth, pdfWorkerCount } from './pdf-plan';
 
 export interface PdfProgress {
   page: number;
@@ -48,37 +56,70 @@ export class PdfError extends Error {
 }
 
 type PdfModule = typeof PdfJs;
+type LoadingTask = ReturnType<PdfModule['getDocument']>;
+type DocumentProxy = Awaited<LoadingTask['promise']>;
 
-/**
- * Load the engine.
- *
- * The legacy build is deliberate: it avoids the newest syntax, so a teacher on
- * a browser a year or two old gets slides rather than a blank error.
- */
-async function loadEngine(): Promise<PdfModule> {
-  return (await import('pdfjs-dist/legacy/build/pdf.mjs')) as unknown as PdfModule;
+/** One pdf.js build: the engine, its worker, and the inline worker bundle. */
+interface Engine {
+  load: () => Promise<unknown>;
+  workerUrl: () => URL;
+  inline: () => Promise<unknown>;
 }
 
+const ENGINES: Engine[] = [
+  {
+    load: () => import('pdfjs-dist/build/pdf.mjs'),
+    workerUrl: () => new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url),
+    inline: () => import('pdfjs-dist/build/pdf.worker.min.mjs'),
+  },
+  {
+    load: () => import('pdfjs-dist/legacy/build/pdf.mjs'),
+    workerUrl: () => new URL('pdfjs-dist/legacy/build/pdf.worker.min.mjs', import.meta.url),
+    inline: () => import('pdfjs-dist/legacy/build/pdf.worker.min.mjs'),
+  },
+];
+
 /**
- * Give the engine somewhere to run, and be willing to be wrong about where.
+ * A worker, or null when the browser refuses to start one.
  *
- * pdf.js ships an ESM worker. Whether a module worker can be started from a
- * bundled URL depends on the bundler, the browser and the page's own headers —
- * three things that can each change without us touching this file, and whose
- * failure looked exactly like a broken PDF. So the worker is an attempt, not an
- * assumption: `openDocument` below falls back to running inline the moment the
- * worker turns out not to be usable, and the teacher sees slides either way.
+ * Whether a module worker can be started from a bundled URL depends on the
+ * bundler, the browser and the page's own headers — three things that can each
+ * change without us touching this file, and whose failure looked exactly like a
+ * broken PDF. So the worker is an attempt, not an assumption.
  */
-function startWorker(pdfjs: PdfModule): boolean {
+function makeWorker(url: URL): Worker | null {
   try {
-    pdfjs.GlobalWorkerOptions.workerPort = new Worker(
-      new URL('pdfjs-dist/legacy/build/pdf.worker.min.mjs', import.meta.url),
-      { type: 'module' },
-    );
-    return true;
+    return new Worker(url, { type: 'module' });
   } catch {
-    return false;
+    return null;
   }
+}
+
+interface OpenedDocument {
+  task: LoadingTask;
+  document_: DocumentProxy;
+  /** Null when this document is running inline on the main thread. */
+  worker: Worker | null;
+}
+
+/** A file problem is the teacher's to fix; anything else is worth retrying. */
+function fileProblem(thrown: unknown): PdfFailure | null {
+  const name = (thrown as { name?: string })?.name ?? '';
+  if (name === 'PasswordException') return 'password';
+  if (name === 'InvalidPDFException') return 'corrupt';
+  return null;
+}
+
+async function openWithWorker(
+  pdfjs: PdfModule,
+  data: Uint8Array,
+  worker: Worker,
+): Promise<OpenedDocument> {
+  // The document binds to whichever worker is in the global slot at the moment
+  // it is created, which is how several documents each get their own thread.
+  pdfjs.GlobalWorkerOptions.workerPort = worker;
+  const task = pdfjs.getDocument({ data, useWorkerFetch: false });
+  return { task, document_: await task.promise, worker };
 }
 
 /**
@@ -88,49 +129,46 @@ function startWorker(pdfjs: PdfModule): boolean {
  * without a Worker at all. The tab is busy while a deck converts — which is a
  * few seconds at upload time, and is the right trade against refusing the file.
  */
-async function runInline(pdfjs: PdfModule): Promise<void> {
+async function openInline(
+  pdfjs: PdfModule,
+  engine: Engine,
+  data: Uint8Array,
+): Promise<OpenedDocument> {
   pdfjs.GlobalWorkerOptions.workerPort = null;
   pdfjs.GlobalWorkerOptions.workerSrc = '';
-  await import('pdfjs-dist/legacy/build/pdf.worker.min.mjs');
+  await engine.inline();
+  const task = pdfjs.getDocument({ data, useWorkerFetch: false });
+  return { task, document_: await task.promise, worker: null };
 }
 
-/** A file problem is the teacher's to fix; anything else is worth retrying inline. */
-function fileProblem(thrown: unknown): PdfFailure | null {
-  const name = (thrown as { name?: string })?.name ?? '';
-  if (name === 'PasswordException') return 'password';
-  if (name === 'InvalidPDFException') return 'corrupt';
-  return null;
-}
-
-async function openDocument(pdfjs: PdfModule, data: Uint8Array) {
-  const load = () =>
-    pdfjs.getDocument({
-      // A fresh copy each attempt: pdf.js transfers the buffer to its worker,
-      // which leaves the original detached and the retry reading zero bytes.
-      data: data.slice(),
-      // Nothing about rasterising a page needs the network, and a document
-      // that reaches for it is not one to indulge.
-      useWorkerFetch: false,
-    });
-
-  let task = load();
-  try {
-    return { task, document_: await task.promise };
-  } catch (thrown) {
-    const problem = fileProblem(thrown);
-    await task.destroy().catch(() => {});
-    if (problem) throw new PdfError(problem, describe(thrown));
-
-    // Not the file, then. Almost always the worker: retry on the main thread,
-    // where there is no URL to resolve and nothing for a browser to refuse.
-    await runInline(pdfjs);
-    task = load();
+/**
+ * Open one document, on a worker if one can be had.
+ *
+ * The worker attempt gets a copy so the original bytes survive for the inline
+ * retry — pdf.js transfers the buffer it is handed, leaving the original
+ * detached and a retry reading zero bytes.
+ */
+async function openDocument(
+  pdfjs: PdfModule,
+  engine: Engine,
+  bytes: Uint8Array,
+): Promise<OpenedDocument> {
+  const worker = makeWorker(engine.workerUrl());
+  if (worker) {
     try {
-      return { task, document_: await task.promise };
-    } catch (second) {
-      await task.destroy().catch(() => {});
-      throw new PdfError(fileProblem(second) ?? 'engine', describe(second));
+      return await openWithWorker(pdfjs, bytes.slice(), worker);
+    } catch (thrown) {
+      worker.terminate();
+      const problem = fileProblem(thrown);
+      if (problem) throw new PdfError(problem, describe(thrown));
+      // Not the file, then: the worker would not run. Fall through to inline.
     }
+  }
+
+  try {
+    return await openInline(pdfjs, engine, bytes);
+  } catch (thrown) {
+    throw new PdfError(fileProblem(thrown) ?? 'engine', describe(thrown));
   }
 }
 
@@ -159,72 +197,201 @@ export interface PdfPageOptions {
  * Render a PDF, one page at a time, handing each page over as it exists.
  *
  * Resolves with how many pages were delivered. The canvas is discarded before
- * the next page starts, so memory holds one page rather than a deck.
+ * the next page starts, so memory holds a page or two rather than a deck.
  */
 export async function pdfPages(file: File, options: PdfPageOptions): Promise<number> {
-  let pdfjs: PdfModule;
-  try {
-    pdfjs = await loadEngine();
-    startWorker(pdfjs);
-  } catch (thrown) {
-    throw new PdfError('engine', describe(thrown));
+  let lastError: unknown = null;
+
+  for (const engine of ENGINES) {
+    let pdfjs: PdfModule;
+    try {
+      pdfjs = (await engine.load()) as unknown as PdfModule;
+    } catch (thrown) {
+      lastError = thrown;
+      continue;
+    }
+
+    // A fresh copy per engine: the inline attempt transfers the buffer, and the
+    // next engine must not be handed an empty one.
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    try {
+      return await renderDeck(pdfjs, engine, bytes, file, options);
+    } catch (thrown) {
+      // A file problem is the teacher's to fix; another engine will not help.
+      if (thrown instanceof PdfError && thrown.reason !== 'engine') throw thrown;
+      lastError = thrown;
+    }
   }
 
-  const { task, document_ } = await openDocument(pdfjs, new Uint8Array(await file.arrayBuffer()));
+  throw new PdfError('engine', describe(lastError));
+}
 
-  const pages = Math.min(document_.numPages, options.maxPages ?? 200);
+async function renderDeck(
+  pdfjs: PdfModule,
+  engine: Engine,
+  bytes: Uint8Array,
+  file: File,
+  options: PdfPageOptions,
+): Promise<number> {
+  const primary = await openDocument(pdfjs, engine, bytes);
+  const pages = Math.min(primary.document_.numPages, options.maxPages ?? 200);
   if (pages === 0) {
-    await task.destroy().catch(() => {});
+    await primary.task.destroy().catch(() => {});
     throw new PdfError('empty', 'no pages');
   }
 
+  const width = pdfTargetWidth(pages);
   const baseName = file.name.replace(/\.pdf$/i, '');
+  const wanted = pdfWorkerCount(
+    typeof navigator === 'undefined' ? 4 : (navigator.hardwareConcurrency ?? 4),
+    file.size,
+    pages,
+  );
+
+  const extras: OpenedDocument[] = [];
+  if (wanted > 1 && primary.worker) {
+    // Each extra worker needs its own document, and therefore its own copy of
+    // the file — the primary's copy went to its worker.
+    const spare = new Uint8Array(await file.arrayBuffer());
+    for (let i = 1; i < wanted; i += 1) {
+      const worker = makeWorker(engine.workerUrl());
+      if (!worker) break;
+      try {
+        extras.push(await openWithWorker(pdfjs, spare.slice(), worker));
+      } catch {
+        worker.terminate();
+        break;
+      }
+    }
+  }
+
+  const documents = [primary, ...extras];
   let delivered = 0;
 
   try {
-    for (let n = 1; n <= pages; n += 1) {
-      options.onProgress?.({ page: n, pages });
-
-      const page = await document_.getPage(n);
-      const unscaled = page.getViewport({ scale: 1 });
-      const viewport = page.getViewport({ scale: TARGET_WIDTH / unscaled.width });
-
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.round(viewport.width);
-      canvas.height = Math.round(viewport.height);
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new PdfError('engine', 'no 2d canvas context');
-
-      // White behind the page: a PDF with a transparent background would
-      // otherwise come out as black text on black.
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      await page.render({ canvas, viewport }).promise;
-
-      const blob = await encodePage(canvas);
-      if (blob) {
-        const extension = blob.type === 'image/webp' ? 'webp' : blob.type === 'image/jpeg' ? 'jpg' : 'png';
-        await options.onPage({
-          file: new File([blob], `${baseName}-${String(n).padStart(2, '0')}.${extension}`, {
-            type: blob.type,
-          }),
-          page: n,
-          pages,
-        });
-        delivered += 1;
+    if (documents.length === 1) {
+      for (let n = 1; n <= pages; n += 1) {
+        options.onProgress?.({ page: n, pages });
+        const rendered = await renderPage(primary.document_, n, width, baseName);
+        if (rendered) {
+          await options.onPage({ file: rendered, page: n, pages });
+          delivered += 1;
+        }
       }
-      page.cleanup();
+    } else {
+      delivered = await renderParallel(documents, pages, width, baseName, options);
     }
   } catch (thrown) {
     if (thrown instanceof PdfError) throw thrown;
     throw new PdfError('engine', describe(thrown));
   } finally {
-    // The loading task, not the document: `destroy()` is what shuts the worker
+    // The loading task, not the document: `destroy()` is what shuts a worker
     // down, and one left running per upload accumulates.
-    await task.destroy().catch(() => {});
+    await Promise.all(documents.map((doc) => doc.task.destroy().catch(() => {})));
   }
 
   return delivered;
+}
+
+/**
+ * Pages dealt to the pool, released in order.
+ *
+ * Awaiting the emission chain is the backpressure: a worker that has finished
+ * a page waits for the uploads behind it rather than filling memory with
+ * finished images. Progress is reported as pages completed, which is
+ * monotonic even though the pages themselves finish out of order.
+ */
+async function renderParallel(
+  documents: OpenedDocument[],
+  pages: number,
+  width: number,
+  baseName: string,
+  options: PdfPageOptions,
+): Promise<number> {
+  const reorder = new PageReorder<{ page: number; file: File }>();
+  let next = 1;
+  let completed = 0;
+  let delivered = 0;
+  let failure: unknown = null;
+  let emitChain: Promise<void> = Promise.resolve();
+
+  const emit = (file: File, page: number): Promise<void> => {
+    emitChain = emitChain.then(async () => {
+      await options.onPage({ file, page, pages });
+      delivered += 1;
+    });
+    return emitChain;
+  };
+
+  const run = async (document_: DocumentProxy) => {
+    for (;;) {
+      if (failure) return;
+      const n = next;
+      next += 1;
+      if (n > pages) return;
+
+      try {
+        const rendered = await renderPage(document_, n, width, baseName);
+        completed += 1;
+        options.onProgress?.({ page: completed, pages });
+        if (rendered) {
+          for (const item of reorder.push(n, { page: n, file: rendered })) {
+            await emit(item.file, item.page);
+          }
+        }
+      } catch (thrown) {
+        failure = thrown;
+        return;
+      }
+    }
+  };
+
+  await Promise.all(documents.map((doc) => run(doc.document_)));
+  await emitChain;
+
+  if (failure) {
+    if (failure instanceof PdfError) throw failure;
+    throw new PdfError('engine', describe(failure));
+  }
+  return delivered;
+}
+
+/** One page as a file, or null when the canvas would not encode. */
+async function renderPage(
+  document_: DocumentProxy,
+  n: number,
+  width: number,
+  baseName: string,
+): Promise<File | null> {
+  const page = await document_.getPage(n);
+  try {
+    const unscaled = page.getViewport({ scale: 1 });
+    const viewport = page.getViewport({ scale: width / unscaled.width });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(viewport.width);
+    canvas.height = Math.round(viewport.height);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new PdfError('engine', 'no 2d canvas context');
+
+    // White behind the page: a PDF with a transparent background would
+    // otherwise come out as black text on black.
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // Annotation mode 0: a slide is a picture of a page, and a link or a form
+    // field drawn into it is work nobody asked for.
+    await page.render({ canvas, viewport, annotationMode: 0 }).promise;
+
+    const blob = await encodePage(canvas);
+    if (!blob) return null;
+    const extension =
+      blob.type === 'image/webp' ? 'webp' : blob.type === 'image/jpeg' ? 'jpg' : 'png';
+    return new File([blob], `${baseName}-${String(n).padStart(2, '0')}.${extension}`, {
+      type: blob.type,
+    });
+  } finally {
+    page.cleanup();
+  }
 }
 
 /**
