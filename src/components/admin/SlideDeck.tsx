@@ -4,12 +4,14 @@ import { useActionState, useRef } from 'react';
 import { useTranslations } from 'next-intl';
 import { ChevronDown, ChevronUp, ImageOff, Trash2, Upload } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { deleteSlide, moveSlide } from '@/app/actions/slides';
+import { deleteAllSlides, deleteSlide, moveSlide } from '@/app/actions/slides';
+import { ActionError } from '@/components/admin/ActionError';
 import { useSlideUpload } from '@/components/live/useSlideUpload';
 import type { AdminState } from '@/app/actions/admin';
 import type { SlideView } from '@/lib/data/live';
 
 const EMPTY: AdminState = { ok: true };
+const IDLE: AdminState = { ok: false };
 
 /**
  * The deck for one class.
@@ -45,6 +47,7 @@ export function SlideDeck({
 
   const [, remove] = useActionState(deleteSlide, EMPTY);
   const [, move] = useActionState(moveSlide, EMPTY);
+  const [clearState, clear] = useActionState(deleteAllSlides, IDLE);
 
   const choose = (files: FileList | File[]) => {
     void upload(files).then(() => {
@@ -100,6 +103,30 @@ export function SlideDeck({
           {detail && (
             <p className="mt-1 font-mono text-[11px] break-words text-ink-muted">{detail}</p>
           )}
+        </div>
+      )}
+
+      {slides.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center justify-end gap-3">
+          <ActionError state={clearState} />
+          <form
+            action={clear}
+            onSubmit={(event) => {
+              if (!window.confirm(t('slidesClearConfirm', { count: slides.length }))) {
+                event.preventDefault();
+              }
+            }}
+          >
+            <input type="hidden" name="sessionId" value={sessionId} />
+            <button
+              type="submit"
+              disabled={busy > 0}
+              className="inline-flex items-center gap-1.5 rounded-full border border-line px-4 py-2 text-[12px] text-ink-muted transition-colors hover:border-red-300 hover:text-red-600 disabled:opacity-40"
+            >
+              <Trash2 className="size-3.5" aria-hidden="true" />
+              {t('slidesClearAll')}
+            </button>
+          </form>
         </div>
       )}
 

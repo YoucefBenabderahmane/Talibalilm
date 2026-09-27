@@ -30,7 +30,7 @@ import {
   saveBoardOp,
   saveMessage,
 } from '@/app/actions/live';
-import { removeSlide, roomSlides } from '@/app/actions/slides';
+import { clearSlides, removeSlide, roomSlides } from '@/app/actions/slides';
 import { removeAt } from '@/lib/live/deck';
 import type { BoardOp, RoomMessage } from '@/lib/live/protocol';
 import type { LiveRoomState } from '@/lib/supabase/database.types';
@@ -201,6 +201,27 @@ export function Classroom({
     live.send({ t: 'deck' });
     if (after.current >= 0) present(after.current);
     else setSlide(-1);
+  };
+
+  /**
+   * Empty the deck, mid-lesson.
+   *
+   * The server goes first, exactly as a single removal does: only once the rows
+   * and their objects are gone does the class see an empty deck. Every other
+   * viewer re-reads its own signed copy, which is now nothing.
+   */
+  const clearDeck = async () => {
+    if (!isHost) return;
+    setDeckError(null);
+    const result = await clearSlides(sessionId);
+    if (!result.ok) {
+      setDeckError({ error: result.error ?? 'saveFailed', detail: result.detail });
+      return;
+    }
+    deckRef.current = [];
+    setDeck([]);
+    setSlide(-1);
+    live.send({ t: 'deck' });
   };
 
   const deckUpload = useSlideUpload(sessionId, { onAdded: addSlide });
@@ -555,6 +576,10 @@ export function Classroom({
                 people={live.people}
                 presenting={presenting}
                 slide={currentSlideUrl}
+                canPresent={isHost}
+                slideIndex={slide}
+                slideTotal={deck.length}
+                onGoSlide={goToSlide}
               />
             )}
           </div>
@@ -702,6 +727,7 @@ export function Classroom({
               canPresent={isHost}
               onGo={goToSlide}
               onRemove={removeSlideAt}
+              onClearAll={clearDeck}
               removeError={deckError}
               upload={deckUpload}
             />

@@ -134,10 +134,34 @@ async function openDocument(pdfjs: PdfModule, data: Uint8Array) {
   }
 }
 
-export async function pdfToImages(
-  file: File,
-  options: { maxPages?: number; onProgress?: (progress: PdfProgress) => void } = {},
-): Promise<File[]> {
+export interface PdfPage {
+  file: File;
+  page: number;
+  pages: number;
+}
+
+export interface PdfPageOptions {
+  maxPages?: number;
+  onProgress?: (progress: PdfProgress) => void;
+  /**
+   * Each page as it is rendered, in order.
+   *
+   * Not a `File[]` on purpose. A hundred-page deck held as PNGs is hundreds of
+   * megabytes and nothing leaves the tab until the last page is drawn; handing
+   * each page over as it exists lets the caller upload it while the next one
+   * renders. Returning a promise slows the loop, which is how a caller applies
+   * backpressure when uploads fall behind.
+   */
+  onPage: (page: PdfPage) => void | Promise<void>;
+}
+
+/**
+ * Render a PDF, one page at a time, handing each page over as it exists.
+ *
+ * Resolves with how many pages were delivered. The canvas is discarded before
+ * the next page starts, so memory holds one page rather than a deck.
+ */
+export async function pdfPages(file: File, options: PdfPageOptions): Promise<number> {
   let pdfjs: PdfModule;
   try {
     pdfjs = await loadEngine();
@@ -155,7 +179,7 @@ export async function pdfToImages(
   }
 
   const baseName = file.name.replace(/\.pdf$/i, '');
-  const out: File[] = [];
+  let delivered = 0;
 
   try {
     for (let n = 1; n <= pages; n += 1) {
@@ -177,11 +201,17 @@ export async function pdfToImages(
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       await page.render({ canvas, viewport }).promise;
 
-      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+      const blob = await encodePage(canvas);
       if (blob) {
-        out.push(
-          new File([blob], `${baseName}-${String(n).padStart(2, '0')}.png`, { type: 'image/png' }),
-        );
+        const extension = blob.type === 'image/webp' ? 'webp' : blob.type === 'image/jpeg' ? 'jpg' : 'png';
+        await options.onPage({
+          file: new File([blob], `${baseName}-${String(n).padStart(2, '0')}.${extension}`, {
+            type: blob.type,
+          }),
+          page: n,
+          pages,
+        });
+        delivered += 1;
       }
       page.cleanup();
     }
@@ -194,7 +224,29 @@ export async function pdfToImages(
     await task.destroy().catch(() => {});
   }
 
-  return out;
+  return delivered;
+}
+
+/**
+ * Encode a rendered page, WebP first.
+ *
+ * PNG was the original choice and it is the wrong one for slides: a page at
+ * this width is one to three megabytes, which the teacher then waits to upload
+ * a hundred times over. WebP is a fraction of that at the same legibility. A
+ * browser that cannot encode it returns PNG from `toBlob` itself — the type is
+ * read from the blob, never assumed, so the caller always declares what it
+ * actually has.
+ */
+async function encodePage(canvas: HTMLCanvasElement): Promise<Blob | null> {
+  const webp = await toBlob(canvas, 'image/webp', 0.85);
+  if (webp) return webp;
+  const jpeg = await toBlob(canvas, 'image/jpeg', 0.9);
+  if (jpeg) return jpeg;
+  return toBlob(canvas, 'image/png');
+}
+
+function toBlob(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob | null> {
+  return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
 }
 
 function describe(thrown: unknown): string {
