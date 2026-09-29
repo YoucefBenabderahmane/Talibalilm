@@ -73,6 +73,10 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       { protocol: 'https', hostname: '*.supabase.co', pathname: '/storage/v1/object/public/**' },
     ],
+    // A month, not Next's default minute. Every re-optimisation is a function
+    // invocation, and a cover that changes once a term does not need one every
+    // time the CDN entry ages out.
+    minimumCacheTTL: 2678400,
   },
 
   // The five enrolment steps became one card at /checkout. Old links — a

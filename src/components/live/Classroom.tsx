@@ -27,10 +27,8 @@ import {
   clearBoard as clearBoardAction,
   controlParticipant,
   endLiveSessionById,
-  saveBoardOp,
-  saveMessage,
 } from '@/app/actions/live';
-import { clearSlides, removeSlide, roomSlides } from '@/app/actions/slides';
+import { clearSlides, removeSlide } from '@/app/actions/slides';
 import { removeAt } from '@/lib/live/deck';
 import type { BoardOp, RoomMessage } from '@/lib/live/protocol';
 import type { LiveRoomState } from '@/lib/supabase/database.types';
@@ -116,13 +114,17 @@ export function Classroom({
    * each viewer separately, so the class cannot be handed the teacher's links.
    */
   const refreshDeck = useCallback(() => {
-    void roomSlides(sessionId).then((next) => {
-      setDeck(next);
-      // A page removed while this browser was on it must not leave the
-      // position past the end of the new deck. The teacher's `slide` message
-      // normally arrives first; this is the safety net for when it does not.
-      setSlide((s) => (s >= next.length ? next.length - 1 : s));
-    });
+    void fetch(`/api/live/slides?session=${sessionId}`)
+      .then((response) => (response.ok ? response.json() : { slides: [] }))
+      .then((body: { slides?: { id: string; url: string | null; filename: string }[] }) => {
+        const next = body.slides ?? [];
+        setDeck(next);
+        // A page removed while this browser was on it must not leave the
+        // position past the end of the new deck. The teacher's `slide` message
+        // normally arrives first; this is the safety net for when it does not.
+        setSlide((s) => (s >= next.length ? next.length - 1 : s));
+      })
+      .catch(() => {});
   }, [sessionId]);
 
   const onMessage = useCallback(
@@ -330,12 +332,31 @@ export function Classroom({
     present(index);
   };
 
+  /**
+   * Persist a board operation or a chat line.
+   *
+   * Through `/api/live/*` and not a Server Action, deliberately: an action
+   * rebuilds the whole classroom on the server, and a lesson sends hundreds of
+   * these — a stroke each time the pen lifts, a line each time somebody
+   * speaks. The room has already shown it, so a failed write is a missing
+   * replay line rather than a lost message, and nothing is shown to the class.
+   */
+  const persist = (path: string, payload: unknown) => {
+    void fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      // The tab may be closing on the last stroke of a lesson.
+      keepalive: true,
+    }).catch(() => {});
+  };
+
   const drawOp = (op: BoardOp) => {
     setBoard((b) => ({ ...b, ops: [...b.ops, op] }));
     live.send({ t: 'board', op });
     // Persisted, so somebody joining late still sees it. The write is refused
     // by policy for anyone but staff, so nothing here needs to check.
-    void saveBoardOp(sessionId, op);
+    persist('/api/live/board', { sessionId, op });
   };
 
   const clearBoard = () => {
@@ -348,7 +369,7 @@ export function Classroom({
     live.sendChat(body);
     // Delivery and the record are separate jobs: the room has already shown the
     // line, and a failed insert must not take it back off the screen.
-    void saveMessage(sessionId, body);
+    persist('/api/live/message', { sessionId, body });
   };
 
   const hostAction = async (identity: string, action: HostAction) => {
