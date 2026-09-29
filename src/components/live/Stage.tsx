@@ -131,6 +131,11 @@ export function Stage({
  * class follows the teacher's page through the same `slide` message the side
  * panel already sends, so students need no controls and cannot take the lesson
  * off course.
+ *
+ * It sits in a row of its own under the image rather than floating over it. A
+ * floating pill covered the bottom of a dense page — the table rows and foot-
+ * notes a teacher points at — which is the one part of a slide that must never
+ * be hidden.
  */
 function SlideStage({
   src,
@@ -231,59 +236,63 @@ function SlideStage({
   }, [canPresent, index, total, onGo]);
 
   return (
-    <div
-      ref={container}
-      className="relative size-full touch-none"
-      style={{ cursor: view.scale > 1 ? (drag.current ? 'grabbing' : 'grab') : 'default' }}
-      onPointerDown={(event) => {
-        if (view.scale <= 1) return;
-        // The pager and the reset control live inside the zoom surface; a drag
-        // started on one of them would capture the pointer and swallow its
-        // click, or the caret in the page box.
-        if ((event.target as HTMLElement).closest('button, input')) return;
-        event.currentTarget.setPointerCapture(event.pointerId);
-        drag.current = { x: event.clientX, y: event.clientY, panX: view.x, panY: view.y };
-      }}
-      onPointerMove={(event) => {
-        const start = drag.current;
-        if (!start) return;
-        const rect = event.currentTarget.getBoundingClientRect();
-        setView((current) => {
-          const pan = clampPan(
-            { x: start.panX + (event.clientX - start.x), y: start.panY + (event.clientY - start.y) },
-            current.scale,
-            rect.width,
-            rect.height,
-          );
-          return { ...current, x: pan.x, y: pan.y };
-        });
-      }}
-      onPointerUp={() => {
-        drag.current = null;
-      }}
-    >
-      {/* eslint-disable-next-line @next/next/no-img-element -- a signed URL that expires, and a transform the optimizer cannot carry */}
-      <img
-        src={src}
-        alt=""
-        draggable={false}
-        className="size-full object-contain select-none"
-        style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
-      />
+    <div className="flex size-full flex-col">
+      <div
+        ref={container}
+        className="relative min-h-0 flex-1 touch-none"
+        style={{ cursor: view.scale > 1 ? (drag.current ? 'grabbing' : 'grab') : 'default' }}
+        onPointerDown={(event) => {
+          if (view.scale <= 1) return;
+          // The reset control lives inside the zoom surface; a drag started on
+          // it would capture the pointer and swallow the click.
+          if ((event.target as HTMLElement).closest('button, input')) return;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          drag.current = { x: event.clientX, y: event.clientY, panX: view.x, panY: view.y };
+        }}
+        onPointerMove={(event) => {
+          const start = drag.current;
+          if (!start) return;
+          const rect = event.currentTarget.getBoundingClientRect();
+          setView((current) => {
+            const pan = clampPan(
+              {
+                x: start.panX + (event.clientX - start.x),
+                y: start.panY + (event.clientY - start.y),
+              },
+              current.scale,
+              rect.width,
+              rect.height,
+            );
+            return { ...current, x: pan.x, y: pan.y };
+          });
+        }}
+        onPointerUp={() => {
+          drag.current = null;
+        }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element -- a signed URL that expires, and a transform the optimizer cannot carry */}
+        <img
+          src={src}
+          alt=""
+          draggable={false}
+          className="size-full object-contain select-none"
+          style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
+        />
 
-      {view.scale > 1 && (
-        <button
-          type="button"
-          onClick={() => setView({ scale: 1, x: 0, y: 0 })}
-          title={t('slideZoomReset')}
-          className="absolute end-3 top-3 rounded-full bg-ink/75 px-3 py-1 text-[11px] text-white/80 transition-colors hover:text-white"
-        >
-          {t('slideZoomReset')} · {Math.round(view.scale * 100)}%
-        </button>
-      )}
+        {view.scale > 1 && (
+          <button
+            type="button"
+            onClick={() => setView({ scale: 1, x: 0, y: 0 })}
+            title={t('slideZoomReset')}
+            className="absolute end-3 top-3 rounded-full bg-ink/75 px-3 py-1 text-[11px] text-white/80 transition-colors hover:text-white"
+          >
+            {t('slideZoomReset')} · {Math.round(view.scale * 100)}%
+          </button>
+        )}
+      </div>
 
       {canPresent && total > 1 && (
-        <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full bg-ink/75 px-1.5 py-1 text-white backdrop-blur">
+        <div className="mx-auto my-2 flex shrink-0 items-center gap-1 rounded-full bg-ink/75 px-1.5 py-1 text-white backdrop-blur">
           <button
             type="button"
             onClick={() => onGo(Math.max(0, index - 1))}
