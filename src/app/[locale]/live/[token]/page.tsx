@@ -142,7 +142,7 @@ export default async function LiveRoomPage({
       removedPeople={attendance
         .filter((row) => row.banned)
         .map((row) => ({ userId: row.userId, name: row.name }))}
-      recordingBaseName={`${safeTitle || 'cours'}-${stamp}`}
+      recordingBaseName={`${safeTitle || t('recording')}-${stamp}`}
     />
   );
 }
