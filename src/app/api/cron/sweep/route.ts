@@ -1,11 +1,17 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server';
 import { supabaseConfigured, siteUrl } from '@/lib/env';
-import { deleteObject } from '@/lib/storage/r2';
-import { notifyUser } from '@/lib/push/server';
-import { sendMail } from '@/lib/email/send';
-import { paymentDue } from '@/lib/email/templates';
 import { reportError } from '@/lib/observability/report';
+
+/**
+ * The heavy clients are imported WHERE THEY ARE USED, not at the top.
+ *
+ * This endpoint runs every fifteen minutes, and most runs have nothing to do:
+ * no expired video, no installment due. Importing the S3 client, nodemailer
+ * and web-push at module scope made every one of those runs pay their startup
+ * cost for nothing — on a plan where function CPU is the scarce resource.
+ * `await import()` inside the branch that needs it keeps the empty run cheap.
+ */
 
 /**
  * The housekeeping the shop needs to stay honest.
@@ -99,6 +105,13 @@ async function sendInstallmentReminders(
     return 0;
   }
   if (!notices || notices.length === 0) return 0;
+
+  // Only now is any of this needed — see the note beside the imports.
+  const [{ notifyUser }, { sendMail }, { paymentDue }] = await Promise.all([
+    import('@/lib/push/server'),
+    import('@/lib/email/send'),
+    import('@/lib/email/templates'),
+  ]);
 
   let sent = 0;
   for (const notice of notices) {
@@ -266,6 +279,9 @@ async function purgeExpiredVideos(supabase: ReturnType<typeof createAdminClient>
     return 0;
   }
   if (!due || due.length === 0) return 0;
+
+  // The S3 client is only worth loading when there is an object to remove.
+  const { deleteObject } = await import('@/lib/storage/r2');
 
   let removed = 0;
   for (const row of due) {

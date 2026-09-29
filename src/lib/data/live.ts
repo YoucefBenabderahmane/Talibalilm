@@ -1,9 +1,10 @@
 import 'server-only';
 import { createClient } from '@/lib/supabase/server';
+import { z } from 'zod';
 import { supabaseConfigured } from '@/lib/env';
 import { reportError } from '@/lib/observability/report';
 import type { LiveStatus } from '@/lib/supabase/database.types';
-import { slideUrl } from '@/app/actions/slides';
+import { r2Configured, signDownload } from '@/lib/storage/r2';
 import type { BoardOp } from '@/lib/live/protocol';
 
 /**
@@ -250,6 +251,57 @@ export async function listSlides(sessionId: string): Promise<SlideView[]> {
     order: r.display_order,
     url: urls[i] ?? null,
   }));
+}
+
+/**
+ * A signed link for one slide, minted only for a caller `can_read_slide()`
+ * approved.
+ *
+ * Every slide read goes through here — the preparation screen, the room, the
+ * deck re-read below — so the answer to "may this person see this file?" is
+ * one function and not three that could drift apart.
+ */
+export async function slideUrl(key: string): Promise<string | null> {
+  if (!supabaseConfigured || !r2Configured) return null;
+  const supabase = await createClient();
+  const { data: allowed, error } = await supabase.rpc('can_read_slide', { key });
+  if (error) {
+    reportError('slides.authorize', error);
+    return null;
+  }
+  if (!allowed) return null;
+  return signDownload(key);
+}
+
+/**
+ * The deck as it stands, for a viewer already in the room.
+ *
+ * Called when the teacher adds slides mid-lesson: the room tells every browser
+ * the deck changed, and each one reads it for itself. The URLs are minted per
+ * caller through `can_read_slide()`, so a slide added during a class is
+ * visible to the students entitled to it and to nobody else — which a URL
+ * copied out of the teacher's page would not have been.
+ */
+export async function roomSlides(
+  sessionId: string,
+): Promise<{ id: string; url: string | null; filename: string }[]> {
+  if (!supabaseConfigured) return [];
+  if (!z.string().uuid().safeParse(sessionId).success) return [];
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('live_slides')
+    .select('id, storage_key, filename')
+    .eq('session_id', sessionId)
+    .order('display_order');
+  if (error) {
+    reportError('slides.roomList', error, { sessionId });
+    return [];
+  }
+
+  const rows = data ?? [];
+  const urls = await Promise.all(rows.map((r) => slideUrl(r.storage_key)));
+  return rows.map((r, i) => ({ id: r.id, url: urls[i] ?? null, filename: r.filename }));
 }
 
 /**

@@ -4,6 +4,12 @@ import { publicEnv, supabaseConfigured } from '@/lib/env';
 import type { Database } from './database.types';
 
 /**
+ * Supabase's session cookie, chunked or not: `sb-<ref>-auth-token`, with
+ * `.0`, `.1`… appended once it outgrows one cookie.
+ */
+const AUTH_COOKIE = /^sb-.*-auth-token/;
+
+/**
  * Refresh the auth session on the response the locale middleware already
  * produced.
  *
@@ -20,6 +26,13 @@ export async function refreshSession(
   // Before the Supabase project is connected, the marketing site still has to
   // render. Treat "not configured" as "signed out" rather than throwing.
   if (!supabaseConfigured) return { userId: null };
+
+  // No cookie, no session — and asking Supabase anyway is a network round trip
+  // plus a token check on every page view by every visitor and every crawler,
+  // none of whom can be signed in. The middleware runs on all of them.
+  if (!request.cookies.getAll().some((cookie) => AUTH_COOKIE.test(cookie.name))) {
+    return { userId: null };
+  }
 
   const env = publicEnv();
 
