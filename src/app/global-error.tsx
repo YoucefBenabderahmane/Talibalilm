@@ -1,12 +1,31 @@
 'use client';
 
+import { useEffect, useState } from 'react';
+
 /**
  * The last resort: the root layout itself threw.
  *
  * This replaces the whole document, so it carries its own <html> and <body> and
  * leans on nothing — no fonts, no theme tokens, no providers, no translations.
  * Everything it might have depended on is, by definition, what just failed.
+ *
+ * The two languages are therefore inlined here, and the one is picked from the
+ * URL after mount. French is what renders first, on the server and before the
+ * effect runs, because French is the default the school publishes in.
  */
+const COPY = {
+  fr: {
+    title: 'Le site est momentanément indisponible',
+    body: 'Réessayez dans un instant. Si cela se répète, communiquez le code ci-dessous.',
+    retry: 'Réessayer',
+  },
+  en: {
+    title: 'The site is temporarily unavailable',
+    body: 'Try again in a moment. If it keeps happening, quote the code below.',
+    retry: 'Try again',
+  },
+} as const;
+
 export default function GlobalError({
   error,
   reset,
@@ -14,8 +33,18 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const [locale, setLocale] = useState<'fr' | 'en'>('fr');
+
+  useEffect(() => {
+    setLocale(
+      window.location.pathname === '/en' || window.location.pathname.startsWith('/en/') ? 'en' : 'fr',
+    );
+  }, []);
+
+  const copy = COPY[locale];
+
   return (
-    <html lang="fr">
+    <html lang={locale}>
       <body
         style={{
           margin: 0,
@@ -29,9 +58,7 @@ export default function GlobalError({
         }}
       >
         <div style={{ maxWidth: '32rem', textAlign: 'center' }}>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 600 }}>
-            Le site est momentanément indisponible
-          </h1>
+          <h1 style={{ fontSize: '1.5rem', fontWeight: 600 }}>{copy.title}</h1>
           <p
             style={{
               marginTop: '0.75rem',
@@ -40,7 +67,7 @@ export default function GlobalError({
               color: '#637471',
             }}
           >
-            Réessayez dans un instant. Si cela se répète, communiquez le code ci-dessous.
+            {copy.body}
           </p>
           {error.digest && (
             <p
@@ -68,7 +95,7 @@ export default function GlobalError({
               cursor: 'pointer',
             }}
           >
-            Réessayer
+            {copy.retry}
           </button>
         </div>
       </body>

@@ -66,8 +66,8 @@ export async function generateMetadata({
   };
 }
 
-function formatMinutes(seconds: number): string {
-  return `${Math.round(seconds / 60)} min`;
+function formatMinutes(t: (key: 'minutes', values: { count: number }) => string, seconds: number) {
+  return t('minutes', { count: Math.round(seconds / 60) });
 }
 
 /** The three icons under the department block, in the order they are typed. */
@@ -412,7 +412,7 @@ export default async function CoursePage({
                               <Badge variant="soft">{t('detail.previewBadge')}</Badge>
                             )}
                             <span className="text-[11px] text-ink-muted tabular-nums">
-                              {formatMinutes(lesson.duration_seconds)}
+                              {formatMinutes(t, lesson.duration_seconds)}
                             </span>
                           </Link>
                         </li>
@@ -443,7 +443,7 @@ export default async function CoursePage({
                             <span className="sr-only">{t('detail.lockedLabel')}</span>
                           )}
                           <span className="text-[11px] text-ink-muted tabular-nums">
-                            {formatMinutes(lesson.duration_seconds)}
+                            {formatMinutes(t, lesson.duration_seconds)}
                           </span>
                         </li>
                       ),

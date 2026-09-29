@@ -152,6 +152,7 @@
     "resultCount": "{count, plural, =0 {Aucun module} =1 {# module disponible} other {# modules disponibles}}",
     "empty": "Aucun module ne correspond à cette recherche.",
     "clearFilters": "Effacer les filtres",
+    "minutes": "{count} min",
     "card": {
       "by": "Par {name}",
       "viewCourse": "Voir le module",
@@ -277,7 +278,8 @@
     "planningTitle": "Planning & Tarifs",
     "planningEmpty": "Aucun créneau publié dans ce mode.",
     "hoursYear": "{n}h/an",
-    "hoursWeek": "{n}h/semaine"
+    "hoursWeek": "{n}h/semaine",
+    "teachingFr": "Français"
   },
   "cursus": {
     "programme": "Programme du cursus",
@@ -1266,6 +1268,11 @@
     "closedBodyStaff": "Cette séance est terminée ou annulée. Ouvrez-la depuis « Cours en direct » — le bouton Ouvrir la passe en direct — ou programmez-en une nouvelle.",
     "closedTitle": "Ce cours n’est pas ouvert",
     "closePanel": "Fermer le panneau",
+    "colourBlue": "Bleu",
+    "colourGreen": "Vert",
+    "colourRed": "Rouge",
+    "colourWhite": "Blanc",
+    "colourYellow": "Jaune",
     "deny": "Refuser",
     "denyCamera": "Couper la caméra",
     "denyScreen": "Couper le partage",
