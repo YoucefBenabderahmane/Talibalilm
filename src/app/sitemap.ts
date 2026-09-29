@@ -1,5 +1,5 @@
 import type { MetadataRoute } from 'next';
-import { listCourses } from '@/lib/content/courses';
+import { listCourses } from '@/lib/data/courses';
 import { listCursus } from '@/lib/data/commerce';
 
 import { routing } from '@/i18n/routing';
@@ -14,7 +14,10 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const base = siteUrl();
   const now = new Date();
   const entries: MetadataRoute.Sitemap = [];
-  const cursusList = await listCursus();
+  // Read once, not per locale. The catalogue is the database's now — the
+  // fixtures this used to read listed six courses that mostly 404ed and none
+  // of the real ones, which is worse than an empty sitemap.
+  const [courses, cursusList] = await Promise.all([listCourses(), listCursus()]);
 
   for (const locale of routing.locales) {
     const p = prefix(locale);
@@ -24,7 +27,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       { url: `${base}${p}/contact`, lastModified: now, changeFrequency: 'monthly', priority: 0.8 },
     );
 
-    for (const course of listCourses()) {
+    for (const course of courses) {
       entries.push({
         url: `${base}${p}/courses/${course.slug}`,
         lastModified: new Date(course.published_at),
