@@ -152,6 +152,7 @@
     "resultCount": "{count, plural, =0 {No modules} =1 {# module available} other {# modules available}}",
     "empty": "No module matches that search.",
     "clearFilters": "Clear filters",
+    "minutes": "{count} min",
     "card": {
       "by": "By {name}",
       "viewCourse": "View the module",
@@ -277,7 +278,8 @@
     "planningTitle": "Timetable & Prices",
     "planningEmpty": "No slot published in this mode.",
     "hoursYear": "{n}h/year",
-    "hoursWeek": "{n}h/week"
+    "hoursWeek": "{n}h/week",
+    "teachingFr": "French"
   },
   "cursus": {
     "programme": "Programme of the cursus",
@@ -1266,6 +1268,11 @@
     "closedBodyStaff": "This session is finished or cancelled. Open it from “Live classes” — the Open button sets it live — or schedule a new one.",
     "closedTitle": "This class is not open",
     "closePanel": "Close the panel",
+    "colourBlue": "Blue",
+    "colourGreen": "Green",
+    "colourRed": "Red",
+    "colourWhite": "White",
+    "colourYellow": "Yellow",
     "deny": "Decline",
     "denyCamera": "Turn camera off",
     "denyScreen": "Stop their sharing",

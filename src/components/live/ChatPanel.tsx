@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { Send } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { safeLocale } from '@/i18n/routing';
 import type { ChatLine } from './useRoom';
 
 /**
@@ -28,6 +29,13 @@ export function ChatPanel({
   onSend: (body: string) => void;
 }) {
   const t = useTranslations('live');
+  // `undefined` would read the browser's language, not the page's: an English
+  // browser on the French room would print 12-hour times under a French
+  // heading. The times themselves are the reader's own clock.
+  const timeFmt = new Intl.DateTimeFormat(safeLocale(useLocale()), {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
   const [draft, setDraft] = useState('');
   const endRef = useRef<HTMLDivElement | null>(null);
 
@@ -53,10 +61,7 @@ export function ChatPanel({
                 {line.name || '—'}
               </span>
               <time className="text-[10px] text-white/30">
-                {new Date(line.at).toLocaleTimeString(undefined, {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}
+                {timeFmt.format(new Date(line.at))}
               </time>
             </p>
             {/* Text, deliberately. Never markup. */}

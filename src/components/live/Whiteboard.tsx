@@ -8,7 +8,20 @@ import type { BoardOp } from '@/lib/live/protocol';
 
 type Tool = 'pen' | 'line' | 'rect' | 'ellipse' | 'text' | 'eraser';
 
-const COLOURS = ['#f8fafc', '#fbbf24', '#34d399', '#60a5fa', '#f87171'];
+/**
+ * The palette, each swatch paired with the message that names it.
+ *
+ * A hex code is not an accessible name: a screen reader announcing "#fbbf24"
+ * tells the teacher nothing. The label is a `live` key and not the colour
+ * itself so both locales get a word.
+ */
+const COLOURS = [
+  { hex: '#f8fafc', label: 'colourWhite' },
+  { hex: '#fbbf24', label: 'colourYellow' },
+  { hex: '#34d399', label: 'colourGreen' },
+  { hex: '#60a5fa', label: 'colourBlue' },
+  { hex: '#f87171', label: 'colourRed' },
+] as const;
 
 /** Text height as a fraction of the board, and the line spacing under it. */
 const TEXT_SIZE = 0.05;
@@ -51,7 +64,7 @@ export function Whiteboard({
   const t = useTranslations('live');
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [tool, setTool] = useState<Tool>('pen');
-  const [colour, setColour] = useState(COLOURS[0]!);
+  const [colour, setColour] = useState<string>(COLOURS[0].hex);
   const drawing = useRef(false);
   const points = useRef<number[]>([]);
   const start = useRef<{ x: number; y: number } | null>(null);
@@ -328,21 +341,21 @@ export function Whiteboard({
 
           <span className="mx-1 h-5 w-px bg-white/15" aria-hidden="true" />
 
-          {COLOURS.map((c) => (
+          {COLOURS.map(({ hex, label }) => (
             <button
-              key={c}
+              key={hex}
               type="button"
               onClick={() => {
-                setColour(c);
+                setColour(hex);
                 if (tool === 'eraser') setTool('pen');
               }}
-              aria-label={c}
-              aria-pressed={colour === c && tool !== 'eraser'}
+              aria-label={t(label)}
+              aria-pressed={colour === hex && tool !== 'eraser'}
               className={cn(
                 'size-5 rounded-full ring-2 transition-transform',
-                colour === c && tool !== 'eraser' ? 'ring-white scale-110' : 'ring-transparent',
+                colour === hex && tool !== 'eraser' ? 'ring-white scale-110' : 'ring-transparent',
               )}
-              style={{ backgroundColor: c }}
+              style={{ backgroundColor: hex }}
             />
           ))}
 

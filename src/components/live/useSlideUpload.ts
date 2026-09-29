@@ -133,7 +133,7 @@ export function useSlideUpload(
             setDetail(
               `${
                 thrown instanceof Error ? `${thrown.name}: ${thrown.message}` : String(thrown)
-              } (origine ${window.location.origin})`,
+              } (origin ${window.location.origin})`,
             );
           }
         });

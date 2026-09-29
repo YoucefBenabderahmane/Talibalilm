@@ -169,7 +169,7 @@ export async function PlanningTarifs({
                                       ? 'modePresentiel'
                                       : 'modeOnline',
                                   ),
-                                  entry.teachingLanguage === 'ar' ? 'العربية' : 'Français',
+                                  entry.teachingLanguage === 'ar' ? 'العربية' : t('teachingFr'),
                                   entry.hoursPerWeek
                                     ? t('hoursWeek', { n: entry.hoursPerWeek / 10 })
                                     : null,

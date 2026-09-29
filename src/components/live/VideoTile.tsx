@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { useTranslations } from 'next-intl';
 import { Track, type Participant, type TrackPublication } from 'livekit-client';
 import { Hand, Mic, MicOff, MonitorUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -28,6 +29,7 @@ export function VideoTile({
   source?: Track.Source;
   className?: string;
 }) {
+  const t = useTranslations('live');
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -110,7 +112,7 @@ export function VideoTile({
         )}
         {person.isHost && (
           <span className="shrink-0 rounded bg-brand-500/90 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-white uppercase">
-            Prof
+            {t('host')}
           </span>
         )}
       </div>
