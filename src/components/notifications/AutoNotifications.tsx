@@ -20,6 +20,17 @@ import { savePushSubscription } from '@/app/actions/push';
  */
 const VAPID = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? '';
 
+/**
+ * The endpoint this browser last told the server about.
+ *
+ * The admin shell mounts this on every page, so without the mark every
+ * navigation through the office screens posted the same subscription again —
+ * a Server Action, which re-renders the whole admin page it was called from.
+ * A push endpoint is stable for the life of the browser profile, so one write
+ * per endpoint is all this ever needed to be.
+ */
+const SAVED = 'tal-push-endpoint';
+
 export function AutoNotifications() {
   const ran = useRef(false);
 
@@ -51,6 +62,10 @@ export function AutoNotifications() {
             applicationServerKey: urlBase64ToUint8Array(VAPID) as BufferSource,
           }));
 
+        // Already registered from this browser: nothing has changed, and the
+        // write would rebuild the admin page for no reason.
+        if (window.localStorage.getItem(SAVED) === subscription.endpoint) return;
+
         const json = subscription.toJSON();
         await savePushSubscription({
           endpoint: subscription.endpoint,
@@ -58,6 +73,7 @@ export function AutoNotifications() {
           auth: json.keys?.auth ?? '',
           userAgent: navigator.userAgent,
         });
+        window.localStorage.setItem(SAVED, subscription.endpoint);
       } catch {
         // Silent by design: this is a convenience, and the admin panel is not
         // the place to explain a browser's push rules.

@@ -9,7 +9,6 @@ import type { AdminState } from '@/app/actions/admin';
 import { errorDetail } from '@/lib/supabase/error-detail';
 import { reportError } from '@/lib/observability/report';
 import { applyPermissions, evictParticipant } from '@/lib/live/server';
-import { currentViewer } from '@/lib/auth/guards';
 
 /**
  * Running a live class.
@@ -394,36 +393,6 @@ export async function setRoomPolicy(_prev: AdminState, formData: FormData): Prom
 // refuses a muted student and a closed chat by policy, and `live_board_ops`
 // admits staff only. The database is the gate, here as everywhere.
 // ---------------------------------------------------------------------------
-
-export async function saveMessage(sessionId: string, body: string): Promise<AdminState> {
-  const parsed = z
-    .object({ sessionId: z.string().uuid(), body: z.string().trim().min(1).max(2000) })
-    .safeParse({ sessionId, body });
-  if (!parsed.success) return { ok: false, error: 'invalid' };
-
-  if (!supabaseConfigured) return { ok: false, error: 'unavailable' };
-  const viewer = await currentViewer();
-  if (!viewer) return { ok: false, error: 'notAdmin' };
-
-  const supabase = await createClient();
-  const { error } = await supabase.from('live_messages').insert({
-    session_id: parsed.data.sessionId,
-    user_id: viewer.id,
-    body: parsed.data.body,
-  });
-  if (error) return { ok: false, error: 'saveFailed', detail: errorDetail(error) };
-  return OK;
-}
-
-export async function saveBoardOp(sessionId: string, op: unknown): Promise<AdminState> {
-  if (!z.string().uuid().safeParse(sessionId).success) return { ok: false, error: 'invalid' };
-  const supabase = await staffClient();
-  const { error } = await supabase
-    .from('live_board_ops')
-    .insert({ session_id: sessionId, op: op as never });
-  if (error) return { ok: false, error: 'saveFailed', detail: errorDetail(error) };
-  return OK;
-}
 
 export async function clearBoard(sessionId: string): Promise<AdminState> {
   if (!z.string().uuid().safeParse(sessionId).success) return { ok: false, error: 'invalid' };

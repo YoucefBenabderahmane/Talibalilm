@@ -283,37 +283,6 @@ export async function confirmSlides(input: {
   };
 }
 
-/**
- * The deck as it stands, for a viewer already in the room.
- *
- * Called when the teacher adds slides mid-lesson: the room tells every browser
- * the deck changed, and each one reads it for itself. The URLs are minted per
- * caller through `can_read_slide()`, so a slide added during a class is
- * visible to the students entitled to it and to nobody else — which a URL
- * copied out of the teacher's page would not have been.
- */
-export async function roomSlides(
-  sessionId: string,
-): Promise<{ id: string; url: string | null; filename: string }[]> {
-  if (!supabaseConfigured) return [];
-  if (!z.string().uuid().safeParse(sessionId).success) return [];
-
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from('live_slides')
-    .select('id, storage_key, filename')
-    .eq('session_id', sessionId)
-    .order('display_order');
-  if (error) {
-    reportError('slides.roomList', error, { sessionId });
-    return [];
-  }
-
-  const rows = data ?? [];
-  const urls = await Promise.all(rows.map((r) => slideUrl(r.storage_key)));
-  return rows.map((r, i) => ({ id: r.id, url: urls[i] ?? null, filename: r.filename }));
-}
-
 const removeSchema = z.object({ id: z.string().uuid(), sessionId: z.string().uuid() });
 
 /**
@@ -449,24 +418,4 @@ export async function clearSlides(sessionId: string): Promise<ClearDeckResult> {
 /** The form-shaped wrapper the preparation screen's `useActionState` uses. */
 export async function deleteAllSlides(_prev: AdminState, formData: FormData): Promise<AdminState> {
   return clearSlides(String(formData.get('sessionId') ?? ''));
-}
-
-/**
- * A signed link to one slide, for whoever is allowed to see it.
- *
- * `can_read_slide()` answers from the key alone, inside the database, so a
- * student cannot pass a session id that disagrees with the object they want.
- * Staff and entitled students get a URL; everyone else gets null, key in hand
- * or not.
- */
-export async function slideUrl(key: string): Promise<string | null> {
-  if (!supabaseConfigured || !r2Configured) return null;
-  const supabase = await createClient();
-  const { data: allowed, error } = await supabase.rpc('can_read_slide', { key });
-  if (error) {
-    reportError('slides.authorize', error);
-    return null;
-  }
-  if (!allowed) return null;
-  return signDownload(key);
 }
