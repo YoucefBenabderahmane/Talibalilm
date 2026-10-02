@@ -1,5 +1,7 @@
-import { createClient } from '@/lib/supabase/server';
+import { unstable_cache } from 'next/cache';
+import { createClient, createPublicClient } from '@/lib/supabase/server';
 import { supabaseConfigured } from '@/lib/env';
+import { CATALOGUE_TAG, CATALOGUE_TTL } from '@/lib/data/cache-tags';
 import { reportError } from '@/lib/observability/report';
 import {
   courses as fixtureCourses,
@@ -120,45 +122,88 @@ export function usingFixtures(): boolean {
   return !supabaseConfigured;
 }
 
+/**
+ * The published catalogue, cached across requests.
+ *
+ * Published courses are the same rows for everyone — that is what the policy
+ * makes true — so this reads through `createPublicClient()` and is cached.
+ * Reading through the cookie-bound client instead is what kept `/` and
+ * `/courses` rendering on every request: `cookies()` opts a route out of
+ * static rendering, and the catalogue was enough to do it.
+ *
+ * A query error is THROWN, not returned. `unstable_cache` stores whatever the
+ * callback returns, so returning `[]` would turn a database blip into an
+ * empty catalogue for the whole revalidate window. The wrapper below catches,
+ * reports, and answers the same `[]` the uncached code did — without writing
+ * the failure to the cache.
+ */
+const readCourses = unstable_cache(
+  async (): Promise<Course[]> => {
+    const supabase = createPublicClient();
+    const { data, error } = await supabase
+      .from('courses')
+      .select(COURSE_SELECT)
+      .eq('status', 'published')
+      .order('display_order', { ascending: true });
+
+    if (error) throw error;
+    return (data as unknown as NestedCourse[]).map(toCourse);
+  },
+  ['courses-published'],
+  { tags: [CATALOGUE_TAG], revalidate: CATALOGUE_TTL },
+);
+
 export async function listCourses(): Promise<Course[]> {
   if (!supabaseConfigured) return listFixtureCourses();
-
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from('courses')
-    .select(COURSE_SELECT)
-    .eq('status', 'published')
-    .order('display_order', { ascending: true });
 
   // A query error against a configured database is an OUTAGE, not an empty
   // catalogue — and it must never fabricate courses. Serving the demo fixtures
   // here once real prices exist would let a customer open and try to buy a
   // course that does not exist. Report it and return nothing; the fixtures are
   // only for the pre-database state, which is `!supabaseConfigured` above.
-  if (error) {
+  try {
+    return await readCourses();
+  } catch (error) {
     reportError('catalogue.list', error);
     return [];
   }
-  return (data as unknown as NestedCourse[]).map(toCourse);
 }
+
+const readCourse = unstable_cache(
+  async (slug: string): Promise<Course | undefined> => {
+    const supabase = createPublicClient();
+    const { data, error } = await supabase
+      .from('courses')
+      .select(COURSE_SELECT)
+      .eq('slug', slug)
+      .maybeSingle();
+
+    if (error) throw error;
+    return data ? toCourse(data as unknown as NestedCourse) : undefined;
+  },
+  ['course'],
+  { tags: [CATALOGUE_TAG], revalidate: CATALOGUE_TTL },
+);
 
 export async function getCourse(slug: string): Promise<Course | undefined> {
   if (!supabaseConfigured) return getFixtureCourse(slug);
 
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from('courses')
-    .select(COURSE_SELECT)
-    .eq('slug', slug)
-    .maybeSingle();
-
-  if (error) {
+  try {
+    return await readCourse(slug);
+  } catch (error) {
     reportError('catalogue.get', error, { slug });
     return undefined;
   }
-  return data ? toCourse(data as unknown as NestedCourse) : undefined;
 }
 
+/**
+ * Deliberately NOT cached, and on the cookie-bound client.
+ *
+ * `anon` holds no grant on `profiles`, so this answers differently depending
+ * on who asks — a signed-in reader sees the teacher, an anonymous one does
+ * not. A read whose answer depends on the reader is never cached and never
+ * served from a cookie-free client.
+ */
 export async function getInstructor(id: string): Promise<Instructor | undefined> {
   if (!supabaseConfigured) return getFixtureInstructor(id);
   if (!id) return undefined;
@@ -179,12 +224,61 @@ export async function getInstructor(id: string): Promise<Instructor | undefined>
   };
 }
 
+/**
+ * What to read next: the same field first, then anything else.
+ *
+ * Two small queries rather than one read of the whole catalogue. The old
+ * version loaded every published course with its modules and lessons just to
+ * show three cards, on every view of every course page — the page crawlers
+ * now find through the sitemap.
+ */
+const readRelated = unstable_cache(
+  async (courseId: string, category: string, limit: number): Promise<Course[]> => {
+    const supabase = createPublicClient();
+
+    const sameField = await supabase
+      .from('courses')
+      .select(COURSE_SELECT)
+      .eq('status', 'published')
+      .eq('category', category)
+      .neq('id', courseId)
+      .order('display_order', { ascending: true })
+      .limit(limit);
+    if (sameField.error) throw sameField.error;
+
+    const found = (sameField.data as unknown as NestedCourse[]).map(toCourse);
+    if (found.length >= limit) return found;
+
+    const rest = await supabase
+      .from('courses')
+      .select(COURSE_SELECT)
+      .eq('status', 'published')
+      .neq('category', category)
+      .neq('id', courseId)
+      .order('display_order', { ascending: true })
+      .limit(limit - found.length);
+    if (rest.error) throw rest.error;
+
+    return [...found, ...(rest.data as unknown as NestedCourse[]).map(toCourse)];
+  },
+  ['related-courses'],
+  { tags: [CATALOGUE_TAG], revalidate: CATALOGUE_TTL },
+);
+
 export async function relatedCourses(course: Course, limit = 3): Promise<Course[]> {
-  const all = await listCourses();
-  const others = all.filter((c) => c.id !== course.id);
-  const sameField = others.filter((c) => c.category === course.category);
-  const rest = others.filter((c) => c.category !== course.category);
-  return [...sameField, ...rest].slice(0, limit);
+  if (!supabaseConfigured) {
+    const others = listFixtureCourses().filter((c) => c.id !== course.id);
+    const sameField = others.filter((c) => c.category === course.category);
+    const rest = others.filter((c) => c.category !== course.category);
+    return [...sameField, ...rest].slice(0, limit);
+  }
+
+  try {
+    return await readRelated(course.id, course.category, limit);
+  } catch (error) {
+    reportError('catalogue.related', error, { courseId: course.id });
+    return [];
+  }
 }
 
 /** Slugs for `generateStaticParams`; fixtures at build time when there is no DB. */
@@ -210,27 +304,36 @@ export interface CoursePrice {
  * An empty list is a real answer — a module with no published price is not on
  * sale yet — and the panel says so instead of showing a confident zero.
  */
+const readCoursePrices = unstable_cache(
+  async (courseId: string): Promise<CoursePrice[]> => {
+    const supabase = createPublicClient();
+    const { data, error } = await supabase
+      .from('products')
+      .select('delivery, price_cents, currency, duration_days')
+      .eq('kind', 'module')
+      .eq('course_id', courseId)
+      .eq('status', 'published')
+      .order('delivery');
+
+    if (error) throw error;
+    return (data ?? []).map((row) => ({
+      delivery: row.delivery,
+      priceCents: row.price_cents,
+      currency: row.currency,
+      durationDays: row.duration_days,
+    }));
+  },
+  ['course-prices'],
+  { tags: [CATALOGUE_TAG], revalidate: CATALOGUE_TTL },
+);
+
 export async function coursePrices(courseId: string): Promise<CoursePrice[]> {
   if (!supabaseConfigured) return [];
 
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from('products')
-    .select('delivery, price_cents, currency, duration_days')
-    .eq('kind', 'module')
-    .eq('course_id', courseId)
-    .eq('status', 'published')
-    .order('delivery');
-
-  if (error) {
+  try {
+    return await readCoursePrices(courseId);
+  } catch (error) {
     reportError('courses.prices', error, { courseId });
     return [];
   }
-
-  return (data ?? []).map((row) => ({
-    delivery: row.delivery,
-    priceCents: row.price_cents,
-    currency: row.currency,
-    durationDays: row.duration_days,
-  }));
 }

@@ -73,6 +73,10 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       { protocol: 'https', hostname: '*.supabase.co', pathname: '/storage/v1/object/public/**' },
     ],
+    // Four widths, not Next's eight. Every width is a variant the optimizer
+    // has to generate, and the site's largest use is a 900px carousel image —
+    // the 2048 and 3840 variants were never requested by any `sizes` here.
+    deviceSizes: [320, 640, 1080, 1920],
     // A month, not Next's default minute. Every re-optimisation is a function
     // invocation, and a cover that changes once a term does not need one every
     // time the CDN entry ages out.

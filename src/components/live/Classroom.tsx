@@ -103,6 +103,8 @@ export function Classroom({
 
   const stageRef = useRef<HTMLDivElement | null>(null);
   const deckRef = useRef(deck);
+  /** Slide ids whose one-off signing request is already in flight. */
+  const signing = useRef<Set<string>>(new Set());
   /** The tab strip and controls, measured so the phone sheet can stop above them. */
   const footRef = useRef<HTMLDivElement | null>(null);
   const [footHeight, setFootHeight] = useState(0);
@@ -127,12 +129,42 @@ export function Classroom({
       .catch(() => {});
   }, [sessionId]);
 
+  /**
+   * The link for the one page being shown, fetched when it is first needed.
+   *
+   * The deck arrives without signed URLs — minting the whole deck on every
+   * join is the cost this avoids — so the page on stage asks for its own link
+   * and keeps it. `signing` stops the same page being requested twice while
+   * the first request is still in flight.
+   */
+  const ensureSlideUrl = useCallback(
+    (index: number) => {
+      const item = deckRef.current[index];
+      if (!item || item.url || signing.current.has(item.id)) return;
+
+      signing.current.add(item.id);
+      void fetch(`/api/live/slides?session=${sessionId}&id=${item.id}`)
+        .then((response) => (response.ok ? response.json() : { url: null }))
+        .then((body: { url?: string | null }) => {
+          if (!body.url) return;
+          setDeck((current) =>
+            current.map((s) => (s.id === item.id ? { ...s, url: body.url! } : s)),
+          );
+        })
+        .catch(() => {})
+        .finally(() => signing.current.delete(item.id));
+    },
+    [sessionId],
+  );
+
   const onMessage = useCallback(
     (message: RoomMessage) => {
       // Only messages that survived `acceptFrom` reach here, so anything below
       // genuinely came from the teacher.
-      if (message.t === 'slide') setSlide(message.i);
-      else if (message.t === 'board') setBoard((b) => ({ ...b, ops: [...b.ops, message.op] }));
+      if (message.t === 'slide') {
+        setSlide(message.i);
+        ensureSlideUrl(message.i);
+      } else if (message.t === 'board') setBoard((b) => ({ ...b, ops: [...b.ops, message.op] }));
       else if (message.t === 'board-clear') setBoard({ ops: [], clearedAt: Date.now() });
       else if (message.t === 'focus') {
         setTab(message.tab);
@@ -141,7 +173,7 @@ export function Classroom({
       else if (message.t === 'sync') setSyncAsk((n) => n + 1);
       else if (message.t === 'ended') window.location.assign('/dashboard');
     },
-    [refreshDeck],
+    [ensureSlideUrl, refreshDeck],
   );
 
   const live = useRoom({ roomToken, isHost, onMessage });
@@ -490,10 +522,14 @@ export function Classroom({
                 setPanelOpen(false);
                 return;
               }
+              // The deck's links are minted when the panel is opened, not when
+              // the room is joined: a viewer who never opens it never pays.
+              if (key === 'slides') refreshDeck();
               setTab(key);
               setPanelOpen(true);
               return;
             }
+            if (key === 'slides') refreshDeck();
             setTab(key);
           }}
           className={cn(
