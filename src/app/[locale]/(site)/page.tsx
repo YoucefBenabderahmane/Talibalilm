@@ -13,6 +13,20 @@ import { institut } from '@/lib/content/institut';
 import { siteUrl } from '@/lib/env';
 import { requireLocale } from '@/i18n/routing';
 
+/**
+ * Static, rebuilt on the catalogue's clock.
+ *
+ * Nothing on this page depends on the reader: the catalogue, the cursus list,
+ * the events and the reviews are all public rows read through cached,
+ * cookie-free clients. Without the cookie read it prerenders; `revalidate` is
+ * what makes an admin edit show up without a deploy — and `revalidateTag`
+ * (see `CATALOGUE_TTL` in `@/lib/data/cache-tags`) makes it immediate.
+ *
+ * The number is a literal because Next reads it statically; keep it equal to
+ * `CATALOGUE_TTL`.
+ */
+export const revalidate = 300;
+
 export default async function HomePage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
   requireLocale(locale);

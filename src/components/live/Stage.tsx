@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { Track, type Participant, type Room } from 'livekit-client';
 import { cn } from '@/lib/utils';
 import { clampPan, nextZoom } from '@/lib/live/zoom';
@@ -70,6 +70,13 @@ export function Stage({
             total={slideTotal}
             onGo={onGoSlide}
           />
+        ) : slideIndex >= 0 && !focusIsShare ? (
+          // The deck arrives without links and the page on stage is signed on
+          // demand, so there is a moment with an index but no image. Showing
+          // the teacher's camera for it read as the slide having vanished.
+          <div className="flex size-full items-center justify-center">
+            <Loader2 className="size-6 animate-spin text-white/40" aria-hidden="true" />
+          </div>
         ) : sharer ? (
           (() => {
             const p = byIdentity(sharer.identity);
@@ -135,7 +142,9 @@ export function Stage({
  * It sits in a row of its own under the image rather than floating over it. A
  * floating pill covered the bottom of a dense page — the table rows and foot-
  * notes a teacher points at — which is the one part of a slide that must never
- * be hidden.
+ * be hidden. The zoom surface clips for the same reason: a page pushed in with
+ * the wheel used to spill over the pager row and put the pill back on the
+ * slide.
  */
 function SlideStage({
   src,
@@ -239,7 +248,7 @@ function SlideStage({
     <div className="flex size-full flex-col">
       <div
         ref={container}
-        className="relative min-h-0 flex-1 touch-none"
+        className="relative min-h-0 flex-1 touch-none overflow-hidden"
         style={{ cursor: view.scale > 1 ? (drag.current ? 'grabbing' : 'grab') : 'default' }}
         onPointerDown={(event) => {
           if (view.scale <= 1) return;

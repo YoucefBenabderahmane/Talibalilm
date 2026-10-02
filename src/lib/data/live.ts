@@ -218,13 +218,17 @@ export interface SlideView {
 }
 
 /**
- * The deck for one class, each slide carrying a link that works for a while.
+ * The deck for one class, WITHOUT signed links.
  *
  * The rows come back through RLS, so a student who does not hold the course
- * gets an empty deck rather than a list of keys to go fishing with. Signing
- * happens per slide and is skipped when R2 is not configured, which is why the
- * URL is nullable: the admin screen then shows the deck with an "unavailable"
- * note instead of failing to render.
+ * gets an empty deck rather than a list of keys to go fishing with.
+ *
+ * Signing is deliberately not done here. Each URL costs a `can_read_slide`
+ * RPC and one HMAC, and the room used to mint the whole deck on every join for
+ * every participant — a hundred-page deck was two hundred round trips before
+ * anybody saw a page. The room now asks for the page it is about to show
+ * (`signSlide`) and for the whole deck only when the slides panel is opened
+ * (`roomSlides`), so a passive join mints nothing.
  */
 export async function listSlides(sessionId: string): Promise<SlideView[]> {
   if (!supabaseConfigured) return [];
@@ -240,16 +244,13 @@ export async function listSlides(sessionId: string): Promise<SlideView[]> {
     return [];
   }
 
-  const rows = data ?? [];
-  const urls = await Promise.all(rows.map((r) => slideUrl(r.storage_key)));
-
-  return rows.map((r, i) => ({
+  return (data ?? []).map((r) => ({
     id: r.id,
     storageKey: r.storage_key,
     filename: r.filename,
     byteSize: r.byte_size,
     order: r.display_order,
-    url: urls[i] ?? null,
+    url: null,
   }));
 }
 
@@ -274,10 +275,40 @@ export async function slideUrl(key: string): Promise<string | null> {
 }
 
 /**
+ * A signed link for ONE slide, for a viewer already in the room.
+ *
+ * This is the on-demand path the classroom uses while presenting: the page
+ * being shown gets a URL, and a page nobody shows costs nothing. The session
+ * is checked as well as the id — a slide id from another class must not be
+ * signable just because the caller can read that class's deck, which is a
+ * different question from "is this page of this lesson".
+ */
+export async function signSlide(sessionId: string, slideId: string): Promise<string | null> {
+  if (!supabaseConfigured || !r2Configured) return null;
+  if (!z.string().uuid().safeParse(sessionId).success) return null;
+  if (!z.string().uuid().safeParse(slideId).success) return null;
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('live_slides')
+    .select('storage_key')
+    .eq('id', slideId)
+    .eq('session_id', sessionId)
+    .maybeSingle();
+  if (error) {
+    reportError('slides.byId', error, { sessionId, slideId });
+    return null;
+  }
+  if (!data) return null;
+
+  return slideUrl(data.storage_key);
+}
+
+/**
  * The deck as it stands, for a viewer already in the room.
  *
- * Called when the teacher adds slides mid-lesson: the room tells every browser
- * the deck changed, and each one reads it for itself. The URLs are minted per
+ * Called when the teacher adds slides mid-lesson and when a viewer opens the
+ * slides panel: each browser reads it for itself. The URLs are minted per
  * caller through `can_read_slide()`, so a slide added during a class is
  * visible to the students entitled to it and to nobody else — which a URL
  * copied out of the teacher's page would not have been.

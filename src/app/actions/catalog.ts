@@ -1,10 +1,11 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, revalidateTag } from 'next/cache';
 import { z } from 'zod';
 import { createClient, createAdminClient } from '@/lib/supabase/server';
 import { supabaseConfigured } from '@/lib/env';
 import { requireAdmin, requireStaff } from '@/lib/auth/guards';
+import { CATALOGUE_TAG } from '@/lib/data/cache-tags';
 import type { AdminState } from '@/app/actions/admin';
 import { errorDetail } from '@/lib/supabase/error-detail';
 import { reportError } from '@/lib/observability/report';
@@ -44,6 +45,9 @@ function refresh() {
   revalidatePath('/[locale]/admin/cursus', 'page');
   revalidatePath('/[locale]', 'page');
   revalidatePath('/[locale]/checkout', 'page');
+  // The cached catalogue readers carry this tag; `revalidatePath` alone would
+  // leave the public pages serving the old rows until the TTL expired.
+  revalidateTag(CATALOGUE_TAG);
 }
 
 // ---------------------------------------------------------------------------

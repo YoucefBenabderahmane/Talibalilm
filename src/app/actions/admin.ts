@@ -1,12 +1,13 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, revalidateTag } from 'next/cache';
 import { parseVideoRef } from '@/lib/content/video';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { supabaseConfigured } from '@/lib/env';
 import { requireStaff } from '@/lib/auth/guards';
+import { CATALOGUE_TAG } from '@/lib/data/cache-tags';
 import { pickFreeSlug, slugify } from '@/lib/content/slug';
 import { highlightsToJson, parseBullets, parseHighlights } from '@/lib/content/presentation';
 import { errorDetail } from '@/lib/supabase/error-detail';
@@ -51,6 +52,18 @@ export interface AdminState {
 }
 
 const OK: AdminState = { ok: true };
+
+/**
+ * The public catalogue changed.
+ *
+ * `revalidatePath` clears the admin screens; `revalidateTag` is what the
+ * public pages listen to — the cached readers in `@/lib/data/courses` and
+ * `@/lib/data/commerce` carry `CATALOGUE_TAG`, and without this an edit would
+ * wait out the five-minute backstop before appearing on `/` or a module page.
+ */
+function revalidateCatalogue(): void {
+  revalidateTag(CATALOGUE_TAG);
+}
 
 async function client() {
   if (!supabaseConfigured) throw new Error('unavailable');
@@ -121,6 +134,7 @@ export async function createCourse(_prev: AdminState, formData: FormData): Promi
     };
 
   revalidatePath('/admin/courses', 'layout');
+  revalidateCatalogue();
   redirect(`/admin/courses/${data.id}`);
 }
 
@@ -223,6 +237,7 @@ export async function updateCourse(_prev: AdminState, formData: FormData): Promi
 
   revalidatePath('/admin/courses', 'layout');
   revalidatePath('/courses', 'layout');
+  revalidateCatalogue();
   return OK;
 }
 
@@ -248,6 +263,7 @@ export async function setCourseStatus(_prev: AdminState, formData: FormData): Pr
 
   revalidatePath('/admin/courses', 'layout');
   revalidatePath('/courses', 'layout');
+  revalidateCatalogue();
   return OK;
 }
 
@@ -260,6 +276,7 @@ export async function deleteCourse(_prev: AdminState, formData: FormData): Promi
   if (error) return { ok: false, error: 'refused', detail: errorDetail(error) };
 
   revalidatePath('/admin/courses', 'layout');
+  revalidateCatalogue();
   redirect('/admin/courses');
 }
 
@@ -286,6 +303,7 @@ export async function addModule(_prev: AdminState, formData: FormData): Promise<
 
   if (error) return { ok: false, error: 'refused', detail: errorDetail(error) };
   revalidatePath('/admin/courses', 'layout');
+  revalidateCatalogue();
   return OK;
 }
 
@@ -303,6 +321,7 @@ export async function renameModule(_prev: AdminState, formData: FormData): Promi
 
   if (error) return { ok: false, error: 'refused', detail: errorDetail(error) };
   revalidatePath('/admin/courses', 'layout');
+  revalidateCatalogue();
   return OK;
 }
 
@@ -314,6 +333,7 @@ export async function deleteModule(_prev: AdminState, formData: FormData): Promi
   const { error } = await supabase.from('modules').delete().eq('id', parsed.data.id);
   if (error) return { ok: false, error: 'refused', detail: errorDetail(error) };
   revalidatePath('/admin/courses', 'layout');
+  revalidateCatalogue();
   return OK;
 }
 
@@ -344,6 +364,7 @@ async function swapPositions(
   if (secondError) return { ok: false, error: 'refused', detail: errorDetail(secondError) };
 
   revalidatePath('/admin/courses', 'layout');
+  revalidateCatalogue();
   return OK;
 }
 
@@ -418,6 +439,7 @@ export async function addLesson(_prev: AdminState, formData: FormData): Promise<
   await supabase.from('lesson_content').insert({ lesson_id: data.id });
 
   revalidatePath('/admin/courses', 'layout');
+  revalidateCatalogue();
   return OK;
 }
 
@@ -478,6 +500,7 @@ export async function updateLesson(_prev: AdminState, formData: FormData): Promi
 
   revalidatePath('/admin/courses', 'layout');
   revalidatePath('/courses', 'layout');
+  revalidateCatalogue();
   return OK;
 }
 
@@ -489,5 +512,6 @@ export async function deleteLesson(_prev: AdminState, formData: FormData): Promi
   const { error } = await supabase.from('lessons').delete().eq('id', parsed.data.id);
   if (error) return { ok: false, error: 'refused', detail: errorDetail(error) };
   revalidatePath('/admin/courses', 'layout');
+  revalidateCatalogue();
   return OK;
 }
