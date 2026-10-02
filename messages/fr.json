@@ -749,6 +749,7 @@
     },
     "errors": {
       "amountRequired": "Indiquez le montant de la remise.",
+      "approfondiExists": "Un Cursus Approfondi existe déjà. Modifiez-le plutôt que d’en créer un second — archivez-le d’abord si vous voulez le remplacer.",
       "bonusSameProduct": "Le module offert doit être différent de celui qui est acheté.",
       "convertToPdf": "PowerPoint ne peut pas être lu directement. Dans PowerPoint : Fichier → Enregistrer sous → choisissez PDF, puis déposez le PDF ici. Chaque page deviendra une diapositive.",
       "couponFunctionMissing": "La base de données a refusé la génération. Le détail exact est affiché ci-dessous — c’est lui qui nomme la cause, pas ce message.",

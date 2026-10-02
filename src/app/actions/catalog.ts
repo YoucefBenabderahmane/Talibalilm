@@ -625,6 +625,22 @@ export async function saveCursus(_prev: AdminState, formData: FormData): Promise
   }
 
   if (!course_id) return { ok: false, error: 'invalid' };
+
+  // The school has exactly one Approfondi: `cursus_kind` holds two values and
+  // the checkout draws one route per value. Nothing stopped a second row, and
+  // a second published row containing the same module drew the same card twice
+  // on the module page. The office edits the existing one; to replace it, the
+  // old row is archived first.
+  const { data: existing, error: existingError } = await supabase
+    .from('cursus')
+    .select('id')
+    .eq('kind', 'approfondi')
+    .neq('status', 'archived')
+    .limit(1)
+    .maybeSingle();
+  if (existingError) return { ok: false, error: 'saveFailed', detail: errorDetail(existingError) };
+  if (existing) return { ok: false, error: 'approfondiExists' };
+
   const { data: course } = await supabase
     .from('courses')
     .select('id, title')
