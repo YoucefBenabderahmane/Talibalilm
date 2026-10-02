@@ -749,6 +749,7 @@
     },
     "errors": {
       "amountRequired": "Give the discount amount.",
+      "approfondiExists": "A Cursus Approfondi already exists. Edit it instead of creating a second one — archive it first if you want to replace it.",
       "bonusSameProduct": "The free module must be different from the one being paid for.",
       "convertToPdf": "PowerPoint cannot be read directly. In PowerPoint: File → Save As → choose PDF, then drop the PDF here. Each page becomes a slide.",
       "couponFunctionMissing": "The database refused to generate. The exact detail is shown below — that is what names the cause, not this message.",

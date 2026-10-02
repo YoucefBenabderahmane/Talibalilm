@@ -101,7 +101,7 @@ export async function CheckoutFlow({
     /** The module has a published tariff, so it can be bought on its own. */
     hasTariff: boolean;
     /** The published approfondi cursus whose programme contains this module. */
-    approfondiIds: string[];
+    approfondiId: string | null;
     /**
      * Modes whose published price is zero, and modes priced above zero. The
      * first decides whether the page offers direct access; the second keeps
@@ -134,7 +134,7 @@ export async function CheckoutFlow({
     selection.kind === null ||
     (selection.kind === 'module'
       ? moduleContext.hasTariff
-      : selection.cursusId !== null && moduleContext.approfondiIds.includes(selection.cursusId));
+      : selection.cursusId !== null && selection.cursusId === moduleContext.approfondiId);
 
   const ignored = stale || !offered;
   const kind = ignored ? null : selection.kind;
@@ -270,7 +270,7 @@ export async function CheckoutFlow({
       lead: moduleContext ? t('formuleLead') : t('cursusLead'),
       complete: kind !== null,
       panel: moduleContext ? (
-        moduleContext.hasTariff || moduleContext.approfondiIds.length > 0 ? (
+        moduleContext.hasTariff || moduleContext.approfondiId !== null ? (
           <ul className="grid gap-4 sm:grid-cols-2">
             {moduleContext.hasTariff && (
               <li>
@@ -307,10 +307,7 @@ export async function CheckoutFlow({
             )}
 
             {cursusList
-              .filter(
-                (option) =>
-                  option.kind === 'approfondi' && moduleContext.approfondiIds.includes(option.id),
-              )
+              .filter((option) => option.id === moduleContext.approfondiId)
               .map((option) => {
                 const on = kind === 'approfondi' && cursusId === option.id;
                 return (
@@ -332,7 +329,7 @@ export async function CheckoutFlow({
                           <GraduationCap className="size-5" />
                         </span>
                         <span className="mt-4 font-display text-[16px] font-semibold text-ink">
-                          {t('buyCursus')}
+                          {option.title}
                         </span>
                         <span className="mt-2 text-[13px] leading-relaxed text-ink-muted">
                           {option.subtitle || t('cursusApprofondiBody')}
