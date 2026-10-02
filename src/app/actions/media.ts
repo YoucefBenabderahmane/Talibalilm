@@ -1,10 +1,11 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, revalidateTag } from 'next/cache';
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { supabaseConfigured } from '@/lib/env';
 import { requireStaff } from '@/lib/auth/guards';
+import { CATALOGUE_TAG } from '@/lib/data/cache-tags';
 import { checkImage } from '@/lib/media/image';
 import { galleryToJson, readGallery } from '@/lib/content/presentation';
 import { reportError } from '@/lib/observability/report';
@@ -65,6 +66,7 @@ export async function uploadCourseCover(
 
   revalidatePath('/[locale]/admin/courses/[id]', 'page');
   revalidatePath('/[locale]/(site)/courses/[slug]', 'page');
+  revalidateTag(CATALOGUE_TAG);
   return OK;
 }
 
@@ -89,6 +91,7 @@ export async function removeCourseCover(
   if (error) return { ok: false, error: 'saveFailed', detail: errorDetail(error) };
 
   revalidatePath('/[locale]/admin/courses/[id]', 'page');
+  revalidateTag(CATALOGUE_TAG);
   return OK;
 }
 
@@ -156,6 +159,7 @@ export async function addGalleryImage(_prev: AdminState, formData: FormData): Pr
 
   revalidatePath('/[locale]/admin/courses/[id]', 'page');
   revalidatePath('/[locale]/(site)/courses/[slug]', 'page');
+  revalidateTag(CATALOGUE_TAG);
   return OK;
 }
 
@@ -187,5 +191,6 @@ export async function removeGalleryImage(
 
   revalidatePath('/[locale]/admin/courses/[id]', 'page');
   revalidatePath('/[locale]/(site)/courses/[slug]', 'page');
+  revalidateTag(CATALOGUE_TAG);
   return OK;
 }

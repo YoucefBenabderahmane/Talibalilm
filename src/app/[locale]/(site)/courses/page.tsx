@@ -13,7 +13,13 @@ import { requireLocale } from '@/i18n/routing';
  * whoever enrols, and splitting a small catalogue by subject offered a
  * distinction it does not actually make. The `category` column stays (the
  * generated cover art used to print it), it just no longer drives a screen.
+ *
+ * The list is the same for every reader, so the page is static and rebuilds on
+ * the catalogue's clock rather than on every visit. The literal is Next's
+ * requirement; keep it equal to `CATALOGUE_TTL` in `@/lib/data/cache-tags`.
  */
+export const revalidate = 300;
+
 export async function generateMetadata({
   params,
 }: {
