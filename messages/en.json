@@ -220,7 +220,7 @@
       "liveNow": "Live now",
       "myClassTitle": "Your class",
       "myClassLead": "This module is taught to several groups. Choose yours — it opens the live sessions.",
-      "classMine": "Yours",
+      "classEnter": "Enter",
       "classLeave": "Leave this class",
       "classNotAllowed": "That class is not open for this module.",
       "classSaveFailed": "That did not save. Try again.",
