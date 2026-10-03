@@ -335,7 +335,9 @@ function LessonRow({
               label={t('videoId')}
               name="video_id"
               defaultValue={lesson.videoProvider === 'r2' ? '' : lesson.videoId}
-              hint={t('videoIdHint')}
+              hint={
+                lesson.videoProvider === 'r2' ? t('videoIdUploadedHint') : t('videoIdHint')
+              }
               error={
                 state.error === 'video_unrecognised' || state.error === 'video_id_is_url'
                   ? t('videoUnrecognised')

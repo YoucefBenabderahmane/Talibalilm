@@ -1,7 +1,8 @@
 'use server';
 
 import { revalidatePath, revalidateTag } from 'next/cache';
-import { parseVideoRef } from '@/lib/content/video';
+import { parseVideoRef, resolveVideoUpdate, type VideoProvider } from '@/lib/content/video';
+import { deleteObject } from '@/lib/storage/r2';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
@@ -477,16 +478,41 @@ export async function updateLesson(_prev: AdminState, formData: FormData): Promi
   // Deciding the provider here — rather than assuming Bunny, which is what this
   // did before and which left every lesson pointing at a service the school does
   // not use — is what makes the player actually appear.
-  const video = parseVideoRef(parsed.data.video_id);
-  if (parsed.data.video_id.trim() && video.provider === 'none') {
-    return { ok: false, error: 'video_unrecognised' };
+  //
+  // The row is read first because the link box is EMPTY for an uploaded video:
+  // resolving the empty box on its own answered `none` and wrote it over the
+  // upload on every save. `resolveVideoUpdate` owns that rule.
+  const { data: currentContent } = await supabase
+    .from('lesson_content')
+    .select('video_provider, video_id')
+    .eq('lesson_id', parsed.data.id)
+    .maybeSingle();
+
+  const video = resolveVideoUpdate(
+    {
+      provider: (currentContent?.video_provider as VideoProvider | undefined) ?? 'none',
+      id: currentContent?.video_id ?? null,
+    },
+    parsed.data.video_id,
+  );
+  if (!video) return { ok: false, error: 'video_unrecognised' };
+
+  // A link replacing an upload orphans the object unless it is removed here.
+  // The other direction — an upload replacing a link or another file — is
+  // handled by the uploader, which deletes the old key as the row moves.
+  if (
+    currentContent?.video_provider === 'r2' &&
+    currentContent.video_id &&
+    video.provider !== 'r2'
+  ) {
+    await deleteObject(currentContent.video_id);
   }
 
   const { error: contentError } = await supabase.from('lesson_content').upsert(
     {
       lesson_id: parsed.data.id,
       content: parsed.data.content,
-      video_id: video.id || null,
+      video_id: video.id,
       video_provider: video.provider,
     },
     { onConflict: 'lesson_id' },

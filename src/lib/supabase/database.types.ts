@@ -311,6 +311,9 @@ export interface Database {
           content?: string;
           video_provider?: VideoProvider;
           video_id?: string | null;
+          video_bytes?: number;
+          video_uploaded_at?: string | null;
+          video_expires_at?: string | null;
           attachments?: Json;
         };
         Update: {

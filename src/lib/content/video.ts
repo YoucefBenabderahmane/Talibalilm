@@ -93,6 +93,36 @@ export function parseVideoRef(input: string, fallback: VideoProvider = 'none'): 
   return NONE;
 }
 
+/** The two `lesson_content` columns a video decision writes. */
+export interface VideoColumns {
+  provider: VideoProvider;
+  /** Null when there is no video; the key for an uploaded one. */
+  id: string | null;
+}
+
+/**
+ * What the video columns become when the lesson form is saved.
+ *
+ * The link box is intentionally EMPTY for an uploaded video — the file lives
+ * in the bucket and the box is not where its key belongs — so an empty box must
+ * not be read as "no video". Reading it that way is what used to delete an
+ * upload the moment the lesson was saved: `parseVideoRef('')` answers `none`,
+ * and the upsert wrote `none` over the R2 row.
+ *
+ * A link, when present, replaces whatever was there. Returns null for a link
+ * that is not understood, so the caller can say so rather than storing a guess.
+ */
+export function resolveVideoUpdate(current: VideoColumns, link: string): VideoColumns | null {
+  if (link.trim() === '') {
+    if (current.provider === 'r2' && current.id) return { provider: 'r2', id: current.id };
+    return { provider: 'none', id: null };
+  }
+
+  const parsed = parseVideoRef(link);
+  if (parsed.provider === 'none') return null;
+  return { provider: parsed.provider, id: parsed.id };
+}
+
 /**
  * The embed address for a stored ref.
  *

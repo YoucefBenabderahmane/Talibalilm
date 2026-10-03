@@ -643,6 +643,7 @@
     "content": "Contenu de la leçon",
     "videoId": "Lien de l’enregistrement (YouTube ou Google Drive)",
     "videoIdHint": "Collez le lien complet de la séance enregistrée. Les étudiants voient le lecteur dans la leçon ; seuls les acheteurs du module peuvent ouvrir la page.",
+    "videoIdUploadedHint": "Une vidéo uploadée est en place. Laisser ce champ vide la conserve ; coller un lien YouTube ou Drive la remplacera.",
     "moveUp": "Monter",
     "moveDown": "Descendre",
     "empty": "Aucun module pour l’instant.",
