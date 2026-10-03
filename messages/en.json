@@ -44,13 +44,6 @@
       "body": "Religious education is a cornerstone in building a community that is aware, balanced and attached to its spiritual values.",
       "cta": "DISCOVER OUR COURSES"
     },
-    "featured": {
-      "eyebrow": "Our catalogue",
-      "title": "Popular courses",
-      "body": "Institut Talib Alim is a centre devoted to teaching the Islamic sciences, with programmes offered both on site and remotely.",
-      "body2": "We guide our students through the sciences of creed, fiqh, the Qur’an and the history of Islam, with teaching that is accessible, progressive and faithful to Islamic values.",
-      "cta": "See all courses"
-    },
     "how": {
       "eyebrow": "How it works",
       "title": "Three steps, then you study",
@@ -91,8 +84,9 @@
     "heroTitleAr": "معهد طالب العلم",
     "brief": {
       "title": "The institute at a glance",
-      "body": "Institut Talib Alim teaches the Islamic sciences and the Arabic language in Montereau-Fault-Yonne and by video. Courses are open to beginners and to advanced students alike, with a progressive programme and teachers who follow each student individually.",
-      "body2": "Every module can be taken on its own or inside a full cursus. You choose the pace, the mode and the option; access opens as soon as you have paid."
+      "body": "Institut Talib Alim offers courses in the Islamic sciences and the Arabic language in Montereau-Fault-Yonne and online. Open to beginners and advanced students alike, the courses follow a progressive programme with individual support.",
+      "body2": "Each module can be taken on its own or as part of a full cursus. You choose the option and the learning mode that suit you. Access to the platform is activated once your registration and payment are approved.",
+      "cta": "Discover all modules"
     },
     "formations": {
       "title": "Discover our programmes",

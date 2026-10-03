@@ -124,7 +124,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
 
           <div className="mt-8">
             <Button asChild size="md" variant="goldOutline">
-              <Link href="/courses">{t('featured.cta')}</Link>
+              <Link href="/courses">{t('brief.cta')}</Link>
             </Button>
           </div>
         </div>
