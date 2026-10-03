@@ -26,6 +26,7 @@ const MESSAGE: Record<
   | 'notFree'
   | 'profileRequired'
   | 'notApproved'
+  | 'emailProvider'
 > = {
   unavailable: 'payUnavailable',
   paypalRefused: 'payRefused',
@@ -38,6 +39,7 @@ const MESSAGE: Record<
   notFree: 'notFree',
   profileRequired: 'profileRequired',
   notApproved: 'notApproved',
+  emailProvider: 'emailProvider',
 };
 
 /**

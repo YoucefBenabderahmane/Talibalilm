@@ -13,6 +13,7 @@ const MESSAGE: Record<string, string> = {
   rateLimited: 'rateLimited',
   notApproved: 'notApproved',
   profileRequired: 'profileRequired',
+  emailProvider: 'emailProvider',
   notFree: 'notFree',
   emptyBasket: 'emptyBasket',
   payUnexpected: 'payUnexpected',

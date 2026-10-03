@@ -7,6 +7,7 @@ import {
   PayPalRefusal,
 } from '@/lib/paypal/client';
 import { markOrderFailed, settleOrder } from '@/lib/commerce/orders';
+import { paypalFailurePath } from '@/lib/commerce/paypal-failure';
 import { checkoutTarget } from '@/app/actions/pay';
 import { createAdminClient } from '@/lib/supabase/server';
 import { reportError } from '@/lib/observability/report';
@@ -28,8 +29,10 @@ export async function GET(request: NextRequest) {
   const orderId = request.nextUrl.searchParams.get('order');
   const paypalOrderId = request.nextUrl.searchParams.get('token');
 
-  const fail = (reason: string) =>
-    NextResponse.redirect(`${base}/checkout?error=${encodeURIComponent(reason)}`);
+  // Back to the module the student was buying, with the reason in the URL.
+  // The checkout no longer has a page of its own to return to.
+  const fail = async (reason: string) =>
+    NextResponse.redirect(`${base}${await paypalFailurePath(orderId, reason)}`);
 
   if (!orderId || !paypalOrderId) return fail('unexpected');
 
@@ -37,7 +40,7 @@ export async function GET(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return NextResponse.redirect(`${base}/login?next=%2Fcheckout%2Fpayment`);
+  if (!user) return NextResponse.redirect(`${base}/login?next=%2Fcourses`);
 
   // Read through the service role, but only after checking the row belongs to
   // the person who came back.

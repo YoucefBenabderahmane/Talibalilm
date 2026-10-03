@@ -383,14 +383,20 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
                     {t('expiresIn', { days: remaining })}
                   </p>
                 )}
+                {/*
+                  No access: the catalogue, not a checkout. The checkout now
+                  lives on each module's own page, so the way in is to choose
+                  the module or the cursus first — a card asking a student to
+                  pay before they have picked anything was one step too early.
+                */}
                 <Button
                   asChild
                   size="sm"
                   variant={hasAccess ? 'ghost' : 'primary'}
                   className="mt-4"
                 >
-                  <Link href="/checkout">
-                    {hasAccess ? t('renew') : tCourses('detail.enrollCta')}
+                  <Link href={hasAccess ? '/checkout' : '/courses'}>
+                    {hasAccess ? t('renew') : t('browseCourses')}
                   </Link>
                 </Button>
               </div>

@@ -5,6 +5,13 @@ import { listCursus } from '@/lib/data/commerce';
 import { routing } from '@/i18n/routing';
 import { siteUrl } from '@/lib/env';
 
+/**
+ * An hour, not every five minutes. A sitemap is a crawler's map, not a feed,
+ * and rebuilding it twelve times an hour cost function CPU for a list that
+ * changes when a module is published — which revalidates the tag anyway.
+ */
+export const revalidate = 3600;
+
 /** Prefix for a locale — the default one is unprefixed, per the routing config. */
 function prefix(locale: string): string {
   return locale === routing.defaultLocale ? '' : `/${locale}`;

@@ -83,22 +83,35 @@ const nextConfig: NextConfig = {
     minimumCacheTTL: 2678400,
   },
 
-  // The five enrolment steps became one card at /checkout. Old links — a
-  // student's bookmark, a PayPal return saved from before the change — land on
-  // the step they were on; send them to the card, which reopens at the step
-  // their selection cookie has reached.
+  // The checkout lives on each module's own page now. The standalone
+  // /checkout page — and the older step URLs and receipt page before it — are
+  // gone; every old link lands on the catalogue, where a module or the cursus
+  // is chosen. These are platform-level redirects, so they cost no function
+  // invocation.
   async redirects() {
     return [
       {
+        source: '/en/checkout/confirmation',
+        destination: '/en/dashboard',
+        permanent: false,
+      },
+      {
+        source: '/checkout/confirmation',
+        destination: '/dashboard',
+        permanent: false,
+      },
+      {
         source: '/en/checkout/:step(mode|modules|review|payment)',
-        destination: '/en/checkout',
+        destination: '/en/courses',
         permanent: false,
       },
       {
         source: '/checkout/:step(mode|modules|review|payment)',
-        destination: '/checkout',
+        destination: '/courses',
         permanent: false,
       },
+      { source: '/en/checkout', destination: '/en/courses', permanent: false },
+      { source: '/checkout', destination: '/courses', permanent: false },
       // Tarifs became Contact. Prices moved onto each module's own page, beside
       // the card that charges them, so the separate list had nothing left to
       // say that the catalogue did not already say better.

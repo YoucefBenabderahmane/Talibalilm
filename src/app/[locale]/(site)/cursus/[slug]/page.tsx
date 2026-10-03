@@ -68,6 +68,11 @@ export default async function CursusPage({
   const mode = requested ?? (presentiel.length > 0 ? 'presentiel' : 'online');
   const years = programmeByYear(mode === 'online' ? online : presentiel);
 
+  // Where "S'inscrire" goes now: the first module of the programme, whose own
+  // page carries the checkout for both the module and this cursus. There is no
+  // standalone checkout to send them to.
+  const firstModule = [...years.values()].flat()[0] ?? null;
+
   const t = await getTranslations('cursus');
   const tCheckout = await getTranslations('checkout');
 
@@ -197,11 +202,13 @@ export default async function CursusPage({
           <div className="mt-10 text-center">
             {holds ? (
               <p className="text-[13px] font-medium text-brand-700">{t('yourAccess')}</p>
-            ) : (
+            ) : firstModule ? (
               <Button asChild size="lg">
-                <Link href="/checkout">{t('enrol')}</Link>
+                <Link href={`/courses/${firstModule.courseSlug}#inscription`}>
+                  {t('enrol')}
+                </Link>
               </Button>
-            )}
+            ) : null}
           </div>
         </div>
       </section>

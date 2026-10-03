@@ -23,6 +23,9 @@ const CLIENT_NAMESPACES = [
   'nav',
   'common',
   'auth',
+  // The login form reads `?error=expiredLink|unexpected` itself — the page is
+  // static, so those two sentences are resolved on the client now.
+  'authErrors',
   'courses',
   'learn',
   'checkout',

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isAllowedProviderEmail } from '@/lib/validation/email-providers';
 
 /**
  * Auth schemas, shared by the form and the server action.
@@ -17,6 +18,19 @@ export const emailSchema = z
   // `a@b.fr` becoming two accounts.
   .transform((v) => v.trim().toLowerCase())
   .pipe(z.string().max(254).email('validation.emailInvalid'));
+
+/**
+ * The provider list applies to NEW accounts only.
+ *
+ * It deliberately does not live in `emailSchema`: that schema is shared by
+ * login, password reset and magic links, and an account opened before the rule
+ * — or by the office on any address — must keep working. Checkout enforces the
+ * same list on new orders; see `maySubscribe` in `@/app/actions/pay`.
+ */
+const registerEmailSchema = emailSchema.refine(
+  isAllowedProviderEmail,
+  'validation.emailProvider',
+);
 
 export const passwordSchema = z
   .string()
@@ -39,7 +53,7 @@ export const registerSchema = z
       .min(2, 'validation.nameShort')
       .max(120, 'validation.nameShort')
       .transform((v) => v.trim()),
-    email: emailSchema,
+    email: registerEmailSchema,
     password: passwordSchema,
     passwordConfirm: z.string(),
     locale: z.enum(['fr', 'en']).default('fr'),

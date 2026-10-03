@@ -1,5 +1,5 @@
 import { getTranslations, setRequestLocale } from 'next-intl/server';
-import { GraduationCap, Layers } from 'lucide-react';
+import { GraduationCap } from 'lucide-react';
 import { Link } from '@/i18n/navigation';
 import { Button } from '@/components/ui/button';
 import { CourseCard } from '@/components/marketing/CourseCard';
@@ -23,9 +23,11 @@ import { requireLocale } from '@/i18n/routing';
  * (see `CATALOGUE_TTL` in `@/lib/data/cache-tags`) makes it immediate.
  *
  * The number is a literal because Next reads it statically; keep it equal to
- * `CATALOGUE_TTL`.
+ * `CATALOGUE_TTL`. It was 300, and regenerating this page every five minutes
+ * was the largest single consumer of function CPU in the app — see the note in
+ * `cache-tags.ts`. Admin edits still show immediately, through the tag.
  */
-export const revalidate = 300;
+export const revalidate = 3600;
 
 export default async function HomePage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
@@ -177,24 +179,27 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
               {t('cursus.lead')}
             </p>
 
+            {/*
+              Only the real programmes. The catalogue can also hold a
+              `kind = 'module'` cursus row — the old "À la carte" pseudo-cursus
+              — and a card for it here duplicated what the module list already
+              says, under a name the school does not use.
+            */}
             <ul className="mt-10 grid gap-6 md:grid-cols-2">
-              {cursusList.map((cursus) => {
-                const Icon = cursus.kind === 'approfondi' ? GraduationCap : Layers;
-                return (
+              {cursusList
+                .filter((cursus) => cursus.kind === 'approfondi')
+                .map((cursus) => (
                   <CursusCard
                     key={cursus.id}
+                    slug={cursus.slug}
                     title={cursus.title}
                     subtitle={cursus.subtitle}
                     description={cursus.description}
                     details={cursus.details}
                     imageUrl={cursus.imageUrl}
                     yearCount={cursus.yearCount}
-                    icon={<Icon className="size-6" aria-hidden="true" />}
-                    certification={tCheckout(
-                      cursus.kind === 'approfondi'
-                        ? 'certificationApprofondi'
-                        : 'certificationModule',
-                    )}
+                    icon={<GraduationCap className="size-6" aria-hidden="true" />}
+                    certification={tCheckout('certificationApprofondi')}
                     labels={{
                       years: tCourses('card.years', { count: cursus.yearCount }),
                       view: t('cursus.cta'),
@@ -203,8 +208,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
                       programme: t('cursus.programme'),
                     }}
                   />
-                );
-              })}
+                ))}
             </ul>
           </div>
         </section>

@@ -1,15 +1,6 @@
+import { Suspense } from 'react';
 import { getTranslations } from 'next-intl/server';
-import {
-  AlertCircle,
-  Award,
-  Check,
-  Gift,
-  GraduationCap,
-  Layers,
-  MapPin,
-  Plus,
-  Video,
-} from 'lucide-react';
+import { Award, Check, Gift, GraduationCap, Layers, MapPin, Plus, Video } from 'lucide-react';
 import { Link } from '@/i18n/navigation';
 import { Button } from '@/components/ui/button';
 import { SubmitButton } from '@/components/ui/submit-button';
@@ -18,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { CheckoutWizard, type WizardStep } from '@/components/checkout/CheckoutWizard';
 import { FreeModuleClaim } from '@/components/checkout/FreeModuleClaim';
 import { PaymentForms } from '@/components/checkout/PaymentForms';
-import { ReturnErrorDialog } from '@/components/checkout/ReturnErrorDialog';
+import { CheckoutReturnError } from '@/components/checkout/CheckoutReturnError';
 import { CheckoutProfileForm } from '@/components/checkout/CheckoutProfileForm';
 import { CouponForm } from '@/components/checkout/CouponForm';
 import {
@@ -39,21 +30,11 @@ import {
   type ProgrammeEntry,
 } from '@/lib/data/commerce';
 import { getStudentProfile, isApproved, profileComplete } from '@/lib/data/profile';
+import { isAllowedProviderEmail } from '@/lib/validation/email-providers';
 import { getPayPalPublicConfig } from '@/lib/paypal/client';
 import { createClient } from '@/lib/supabase/server';
 import { supabaseConfigured } from '@/lib/env';
 import { safeLocale } from '@/i18n/routing';
-
-/** Errors handed back by the PayPal return and cancel routes, in the URL. */
-const RETURN_ERRORS: Record<string, string> = {
-  cancelled: 'payCancelled',
-  amount_mismatch: 'payMismatch',
-  not_completed: 'payNotCompleted',
-  not_found: 'payUnexpected',
-  unexpected: 'payUnexpected',
-  unavailable: 'payUnavailable',
-  paypalRefused: 'payRefused',
-};
 
 const CARD =
   'relative rounded-[var(--radius-card)] border p-5 text-start transition-colors';
@@ -68,32 +49,28 @@ const CARD_OFF = 'border-line bg-white hover:border-brand-300';
  * crosses into the browser. The wizard around it moves between panels and
  * nothing else.
  *
- * It is one component rather than five pages so it can also be dropped under a
- * module's page — which is where a student who has just read what is taught
- * actually wants to enrol, rather than being sent to a separate shop.
+ * It lives on a module's page and nowhere else: there is no standalone
+ * checkout, because the student who has just read what is taught should enrol
+ * there rather than be sent to a separate shop to pick a module again.
  */
 export async function CheckoutFlow({
   locale,
-  returnError,
   moduleContext,
 }: {
   locale: string;
-  /** `?error=` from the PayPal return route. */
-  returnError?: string;
   /**
-   * Set when the card is rendered on a module's own page. The module is the
-   * subject, so the first step is not "which cursus" in the abstract but the
-   * two ways this subject is bought: **this module** (always, once it has a
-   * price), or each approfondi whose programme contains it. The module list
-   * stays hidden (the module is already known); choosing the approfondi brings
-   * the years step back.
+   * The module the card stands on. It is the subject, so the first step is not
+   * "which cursus" in the abstract but the two ways this subject is bought:
+   * **this module** (always, once it has a price), or each approfondi whose
+   * programme contains it. The module list stays hidden (the module is already
+   * known); choosing the approfondi brings the years step back.
    *
    * A selection left over from another module's page is ignored, so this page
    * never shows somebody else's basket — but an approfondi choice is kept: it
    * is an answer to this page's own first question. A choice of a route this
    * page no longer offers is ignored too, for the same reason.
    */
-  moduleContext?: {
+  moduleContext: {
     courseId: string;
     /** The module's public path — the sign-in round trip returns here. */
     slug: string;
@@ -121,16 +98,12 @@ export async function CheckoutFlow({
   // A basket that belongs to ANOTHER module's page is not this page's. An
   // approfondi choice is this page's answer even though it names no module, so
   // it survives; only a module basket for a different course is ignored.
-  const stale =
-    moduleContext !== undefined &&
-    selection.kind === 'module' &&
-    selection.courseId !== moduleContext.courseId;
+  const stale = selection.kind === 'module' && selection.courseId !== moduleContext.courseId;
 
   // A cookie can also name a route this page no longer offers — the office
   // removed the module from the cursus, or unpublished its price. Treated as
   // unanswered rather than showing a card that is not there.
   const offered =
-    moduleContext === undefined ||
     selection.kind === null ||
     (selection.kind === 'module'
       ? moduleContext.hasTariff
@@ -179,6 +152,11 @@ export async function CheckoutFlow({
   const profile = signedIn ? await getStudentProfile() : null;
   const detailsComplete = profileComplete(profile);
 
+  // New orders are reserved for the mailbox providers the school accepts. The
+  // pay actions enforce it; saying it here, before the payment card, means the
+  // student learns it from a sentence rather than from a refused PayPal popup.
+  const emailAllowed = isAllowedProviderEmail(profile?.email);
+
   // The school lets accounts in deliberately. An account that has not been
   // approved can fill everything in and see the total; it cannot pay.
   const approved = signedIn ? await isApproved() : false;
@@ -190,11 +168,7 @@ export async function CheckoutFlow({
   //
   // Only when NOTHING about the module is priced: a module free in one mode
   // and paid in the other still needs both figures in front of the student.
-  if (
-    moduleContext &&
-    moduleContext.paidModes.length === 0 &&
-    moduleContext.freeModes.length > 0
-  ) {
+  if (moduleContext.paidModes.length === 0 && moduleContext.freeModes.length > 0) {
     return (
       <div className="rounded-[var(--radius-card)] border border-brand-200 bg-brand-50/40 p-6 text-center sm:p-8">
         <span
@@ -235,6 +209,13 @@ export async function CheckoutFlow({
             <p className="mb-4 text-[13px] text-ink-muted">{t('profileRequired')}</p>
             <CheckoutProfileForm profile={profile} email={profile?.email ?? null} />
           </div>
+        ) : !emailAllowed ? (
+          <div className="mx-auto mt-6 max-w-md rounded-[var(--radius-card)] border border-gold-300 bg-gold-50/60 p-5 text-start">
+            <p className="text-[13px] font-medium text-ink">{t('emailProviderTitle')}</p>
+            <p className="mt-1 text-[12px] leading-relaxed text-ink-muted">
+              {t('emailProviderBody')}
+            </p>
+          </div>
         ) : (
           <div className="mt-6 flex flex-wrap justify-center gap-3">
             {moduleContext.freeModes.map((mode) => (
@@ -260,16 +241,15 @@ export async function CheckoutFlow({
   // Public config only — the client id, the currency and the environment. The
   // secret never leaves the server module it is read in.
   const paypal = await getPayPalPublicConfig();
-  const errorKey = returnError ? RETURN_ERRORS[returnError] : undefined;
 
   const allSteps: WizardStep[] = [
     {
       key: 'cursus',
-      label: moduleContext ? t('steps.formule') : t('steps.cursus'),
-      heading: moduleContext ? t('steps.formule') : t('steps.cursus'),
-      lead: moduleContext ? t('formuleLead') : t('cursusLead'),
+      label: t('steps.formule'),
+      heading: t('steps.formule'),
+      lead: t('formuleLead'),
       complete: kind !== null,
-      panel: moduleContext ? (
+      panel:
         moduleContext.hasTariff || moduleContext.approfondiId !== null ? (
           <ul className="grid gap-4 sm:grid-cols-2">
             {moduleContext.hasTariff && (
@@ -352,99 +332,6 @@ export async function CheckoutFlow({
           </ul>
         ) : (
           <Empty>{t('formuleNone')}</Empty>
-        )
-      ) : (
-          <ul className="grid gap-4 sm:grid-cols-2">
-            {/*
-              The standalone route is structure, not content. It used to be
-              drawn from a `cursus` row of kind 'module', which a project that
-              never ran the seed migration does not have — and then no module
-              could be sold on its own, silently, because the card that should
-              have said so did not exist. It is drawn here instead, and any
-              such row is deliberately not drawn a second time.
-            */}
-            <li>
-              <form action={chooseCursus} className="h-full">
-                <input type="hidden" name="kind" value="module" />
-                <button
-                  type="submit"
-                  aria-pressed={kind === 'module'}
-                  className={`${CARD} flex h-full w-full flex-col items-start ${
-                    kind === 'module' ? CARD_ON : CARD_OFF
-                  }`}
-                >
-                  <span
-                    className="flex size-10 items-center justify-center rounded-lg bg-brand-50 text-brand-600"
-                    aria-hidden="true"
-                  >
-                    <Layers className="size-5" />
-                  </span>
-                  <span className="mt-4 font-display text-[16px] font-semibold text-ink">
-                    {t('cursusModuleName')}
-                  </span>
-                  <span className="mt-2 text-[13px] leading-relaxed text-ink-muted">
-                    {t('cursusModuleBody')}
-                  </span>
-                  <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-2.5 py-1 text-[11px] font-medium text-brand-700">
-                    <Award className="size-3.5" aria-hidden="true" />
-                    {t('certificationModule')}
-                  </span>
-                  <PendingSpinner className="absolute end-4 top-4 text-brand-600" />
-                </button>
-              </form>
-            </li>
-
-            {cursusList
-              .filter((option) => option.kind === 'approfondi')
-              .map((option) => {
-                const on = kind === 'approfondi' && cursusId === option.id;
-                return (
-                  <li key={option.id}>
-                    <form action={chooseCursus} className="h-full">
-                      <input type="hidden" name="kind" value="approfondi" />
-                      <input type="hidden" name="cursusId" value={option.id} />
-                      <button
-                        type="submit"
-                        aria-pressed={on}
-                        className={`${CARD} flex h-full w-full flex-col items-start ${
-                          on ? CARD_ON : CARD_OFF
-                        }`}
-                      >
-                        <span
-                          className="flex size-10 items-center justify-center rounded-lg bg-brand-50 text-brand-600"
-                          aria-hidden="true"
-                        >
-                          <GraduationCap className="size-5" />
-                        </span>
-                        <span className="mt-4 font-display text-[16px] font-semibold text-ink">
-                          {option.title}
-                        </span>
-                        <span className="mt-2 text-[13px] leading-relaxed text-ink-muted">
-                          {option.subtitle || t('cursusApprofondiBody')}
-                        </span>
-                        {/*
-                          What the student leaves with. It is the clearest
-                          difference between the two routes and the question
-                          the office is asked most, so it belongs on the card
-                          where the choice is made rather than three steps
-                          later.
-                        */}
-                        <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-2.5 py-1 text-[11px] font-medium text-brand-700">
-                          <Award className="size-3.5" aria-hidden="true" />
-                          {t('certificationApprofondi')}
-                        </span>
-                        {option.yearCount > 1 && (
-                          <span className="mt-2 text-[11px] text-brand-600">
-                            {t('yearLabel', { year: option.yearCount })}
-                          </span>
-                        )}
-                        <PendingSpinner className="absolute end-4 top-4 text-brand-600" />
-                      </button>
-                    </form>
-                  </li>
-                );
-              })}
-          </ul>
         ),
     },
     {
@@ -619,10 +506,16 @@ export async function CheckoutFlow({
           <p className="text-[13px] text-ink-muted">{t('loginRequired')}</p>
           <div className="mt-4 flex flex-wrap gap-3">
             <Button asChild size="md">
-              <Link href="/register?next=%2Fcheckout">{t('registerCta')}</Link>
+              <Link href="/register">{t('registerCta')}</Link>
             </Button>
             <Button asChild size="md" variant="outline">
-              <Link href="/login?next=%2Fcheckout">{t('loginCta')}</Link>
+              <Link
+                href={`/login?next=${encodeURIComponent(
+                  `/courses/${moduleContext.slug}#inscription`,
+                )}`}
+              >
+                {t('loginCta')}
+              </Link>
             </Button>
           </div>
         </div>
@@ -637,20 +530,14 @@ export async function CheckoutFlow({
       lead: t('payLead'),
       complete: priced !== null && detailsComplete,
       panel: !priced ? (
-        <Empty>{moduleContext && delivery ? t('moduleNotSoldInMode') : t('emptyBasket')}</Empty>
+        <Empty>{delivery ? t('moduleNotSoldInMode') : t('emptyBasket')}</Empty>
       ) : (
         <>
-          {errorKey && <ReturnErrorDialog message={t(errorKey)} />}
-
-          {errorKey && (
-            <p
-              role="alert"
-              className="mb-5 flex items-start gap-2 rounded-[var(--radius-card)] border border-line bg-surface/60 p-4 text-[13px] leading-relaxed text-ink"
-            >
-              <AlertCircle className="mt-0.5 size-4 shrink-0 text-ink-muted" aria-hidden="true" />
-              {t(errorKey)}
-            </p>
-          )}
+          {/* A failed PayPal redirect arrives with `?error=`; the client
+              component reads it so this page never needs `searchParams`. */}
+          <Suspense fallback={null}>
+            <CheckoutReturnError />
+          </Suspense>
 
           {/*
             What is being bought, on the same screen as the button that buys
@@ -794,6 +681,13 @@ export async function CheckoutFlow({
                     {t('approvalPendingBody')}
                   </p>
                 </div>
+              ) : signedIn && !emailAllowed ? (
+                <div className="rounded-[var(--radius-card)] border border-gold-300 bg-gold-50/60 p-5">
+                  <p className="text-[13px] font-medium text-ink">{t('emailProviderTitle')}</p>
+                  <p className="mt-1 text-[12px] leading-relaxed text-ink-muted">
+                    {t('emailProviderBody')}
+                  </p>
+                </div>
               ) : (
                 <PaymentForms paypal={paypal} free={priced.totalCents === 0} locale={locale} />
               )}
@@ -809,9 +703,7 @@ export async function CheckoutFlow({
   // means choosing a year. The route question itself is the first step — see
   // the cursus panel above.
   const steps =
-    moduleContext && kind !== 'approfondi'
-      ? allSteps.filter((step) => step.key !== 'modules')
-      : allSteps;
+    kind !== 'approfondi' ? allSteps.filter((step) => step.key !== 'modules') : allSteps;
 
   return (
     <CheckoutWizard

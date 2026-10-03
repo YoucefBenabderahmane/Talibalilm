@@ -21,6 +21,7 @@ const HEADING_STARTS = ['📚', '✨', '➡️', '💳', '🎓', '📖', '⚠️
  * measured height.
  */
 export function CursusCard({
+  slug,
   title,
   subtitle,
   description,
@@ -31,6 +32,7 @@ export function CursusCard({
   certification,
   labels,
 }: {
+  slug: string;
   title: string;
   subtitle: string;
   description: string;
@@ -79,7 +81,7 @@ export function CursusCard({
 
         <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-3">
           <Button asChild size="sm" variant="outline">
-            <Link href="/checkout">{labels.enrol}</Link>
+            <Link href={`/cursus/${slug}`}>{labels.enrol}</Link>
           </Button>
           {hasProgramme && (
             <button

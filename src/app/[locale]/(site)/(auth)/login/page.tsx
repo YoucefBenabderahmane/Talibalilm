@@ -16,36 +16,21 @@ export async function generateMetadata({
   return { title: t('loginTitle'), robots: { index: false, follow: false } };
 }
 
-export default async function LoginPage({
-  params,
-  searchParams,
-}: {
-  params: Promise<{ locale: string }>;
-  searchParams: Promise<{ next?: string; reset?: string; error?: string }>;
-}) {
+export default async function LoginPage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
   requireLocale(locale);
   setRequestLocale(locale);
 
-  const { next: rawNext, reset, error } = await searchParams;
-
-  // Sanitised here as well as in the server action. The action is what makes
-  // it safe; this keeps an attacker-supplied absolute URL from being reflected
-  // into the page's markup in the first place.
-  const next = rawNext?.startsWith('/') && !rawNext.startsWith('//') ? rawNext : undefined;
   const t = await getTranslations('auth');
-  const tErrors = await getTranslations('authErrors');
 
-  // The callback route reports failures as a key, not a sentence, so the
-  // message is localised here rather than baked into a redirect URL.
-  const notice = reset === '1' ? t('resetDone') : undefined;
-  const calloutError =
-    error === 'expiredLink' ? tErrors('expiredLink') : error ? tErrors('unexpected') : undefined;
-
+  // `?next=`, `?reset=1` and `?error=` are read by the form, on the client.
+  // Reading them here made every login render on the server for a redirect
+  // hint and a message that only exist after an arrival — the page is static
+  // now, and the form says those things itself.
   return (
     <AuthCard
       title={t('loginTitle')}
-      lead={calloutError ?? t('loginLead')}
+      lead={t('loginLead')}
       footer={
         <>
           {t('noAccount')}{' '}
@@ -55,7 +40,7 @@ export default async function LoginPage({
         </>
       }
     >
-      <LoginForm next={next} notice={notice} />
+      <LoginForm />
     </AuthCard>
   );
 }
