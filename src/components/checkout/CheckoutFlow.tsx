@@ -77,8 +77,12 @@ export async function CheckoutFlow({
     title: string;
     /** The module has a published tariff, so it can be bought on its own. */
     hasTariff: boolean;
-    /** The published approfondi cursus whose programme contains this module. */
-    approfondiId: string | null;
+    /**
+     * Every published approfondi cursus whose programme contains this module,
+     * in display order. More than one means the student chooses which
+     * programme they are enrolling in; one means there is nothing to ask.
+     */
+    approfondiIds: string[];
     /**
      * Modes whose published price is zero, and modes priced above zero. The
      * first decides whether the page offers direct access; the second keeps
@@ -107,7 +111,12 @@ export async function CheckoutFlow({
     selection.kind === null ||
     (selection.kind === 'module'
       ? moduleContext.hasTariff
-      : selection.cursusId !== null && selection.cursusId === moduleContext.approfondiId);
+      : selection.cursusId === null
+        ? // A pending approfondi choice is this page's answer only when there
+          // is something to choose between; on a single-programme page it is a
+          // stale cookie from another module and the first step asks again.
+          moduleContext.approfondiIds.length > 1
+        : moduleContext.approfondiIds.includes(selection.cursusId));
 
   const ignored = stale || !offered;
   const kind = ignored ? null : selection.kind;
@@ -242,6 +251,78 @@ export async function CheckoutFlow({
   // secret never leaves the server module it is read in.
   const paypal = await getPayPalPublicConfig();
 
+  // The single programme, when there is only one: the card can say how long it
+  // runs. With several, the card stays generic and the next step carries each
+  // programme's own details.
+  const onlyCursus =
+    moduleContext.approfondiIds.length === 1
+      ? (cursusList.find((c) => c.id === moduleContext.approfondiIds[0]) ?? null)
+      : null;
+
+  // Which Approfondi, when the module sits in more than one. A step of its own
+  // rather than a card per programme on the first screen: the route question
+  // ("this module, or the full programme") comes first, and only a student who
+  // chose the programme is asked which one.
+  const cursusChoiceSteps: WizardStep[] =
+    moduleContext.approfondiIds.length > 1
+      ? [
+          {
+            key: 'cursusType',
+            label: t('steps.cursus'),
+            heading: t('cursusChoiceTitle'),
+            lead: t('cursusChoiceLead'),
+            complete: cursusId !== null,
+            panel: (
+              <ul className="grid gap-4 sm:grid-cols-2">
+                {cursusList
+                  .filter((option) => moduleContext.approfondiIds.includes(option.id))
+                  .map((option) => {
+                    const on = cursusId === option.id;
+                    return (
+                      <li key={option.id}>
+                        <form action={chooseCursus} className="h-full">
+                          <input type="hidden" name="kind" value="approfondi" />
+                          <input type="hidden" name="cursusId" value={option.id} />
+                          <button
+                            type="submit"
+                            aria-pressed={on}
+                            className={`${CARD} flex h-full w-full flex-col items-start ${
+                              on ? CARD_ON : CARD_OFF
+                            }`}
+                          >
+                            <span
+                              className="flex size-10 items-center justify-center rounded-lg bg-brand-50 text-brand-600"
+                              aria-hidden="true"
+                            >
+                              <GraduationCap className="size-5" />
+                            </span>
+                            <span className="mt-4 font-display text-[16px] font-semibold text-ink">
+                              {option.title}
+                            </span>
+                            <span className="mt-2 text-[13px] leading-relaxed text-ink-muted">
+                              {option.subtitle || t('cursusApprofondiBody')}
+                            </span>
+                            <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-2.5 py-1 text-[11px] font-medium text-brand-700">
+                              <Award className="size-3.5" aria-hidden="true" />
+                              {t('certificationApprofondi')}
+                            </span>
+                            {option.yearCount > 1 && (
+                              <span className="mt-2 text-[11px] text-brand-600">
+                                {t('yearLabel', { year: option.yearCount })}
+                              </span>
+                            )}
+                            <PendingSpinner className="absolute end-4 top-4 text-brand-600" />
+                          </button>
+                        </form>
+                      </li>
+                    );
+                  })}
+              </ul>
+            ),
+          },
+        ]
+      : [];
+
   const allSteps: WizardStep[] = [
     {
       key: 'cursus',
@@ -250,7 +331,7 @@ export async function CheckoutFlow({
       lead: t('formuleLead'),
       complete: kind !== null,
       panel:
-        moduleContext.hasTariff || moduleContext.approfondiId !== null ? (
+        moduleContext.hasTariff || moduleContext.approfondiIds.length > 0 ? (
           <ul className="grid gap-4 sm:grid-cols-2">
             {moduleContext.hasTariff && (
               <li>
@@ -286,54 +367,60 @@ export async function CheckoutFlow({
               </li>
             )}
 
-            {cursusList
-              .filter((option) => option.id === moduleContext.approfondiId)
-              .map((option) => {
-                const on = kind === 'approfondi' && cursusId === option.id;
-                return (
-                  <li key={option.id}>
-                    <form action={chooseCursus} className="h-full">
-                      <input type="hidden" name="kind" value="approfondi" />
-                      <input type="hidden" name="cursusId" value={option.id} />
-                      <button
-                        type="submit"
-                        aria-pressed={on}
-                        className={`${CARD} flex h-full w-full flex-col items-start ${
-                          on ? CARD_ON : CARD_OFF
-                        }`}
-                      >
-                        <span
-                          className="flex size-10 items-center justify-center rounded-lg bg-brand-50 text-brand-600"
-                          aria-hidden="true"
-                        >
-                          <GraduationCap className="size-5" />
-                        </span>
-                        <span className="mt-4 font-display text-[16px] font-semibold text-ink">
-                          {option.title}
-                        </span>
-                        <span className="mt-2 text-[13px] leading-relaxed text-ink-muted">
-                          {option.subtitle || t('cursusApprofondiBody')}
-                        </span>
-                        <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-2.5 py-1 text-[11px] font-medium text-brand-700">
-                          <Award className="size-3.5" aria-hidden="true" />
-                          {t('certificationApprofondi')}
-                        </span>
-                        {option.yearCount > 1 && (
-                          <span className="mt-2 text-[11px] text-brand-600">
-                            {t('yearLabel', { year: option.yearCount })}
-                          </span>
-                        )}
-                        <PendingSpinner className="absolute end-4 top-4 text-brand-600" />
-                      </button>
-                    </form>
-                  </li>
-                );
-              })}
+            {moduleContext.approfondiIds.length > 0 && (
+              <li>
+                <form action={chooseCursus} className="h-full">
+                  <input type="hidden" name="kind" value="approfondi" />
+                  {/*
+                    One programme: the card already knows which. Several: the
+                    value is the one already chosen, or empty — the choice is
+                    the step that follows, and pressing this card again must
+                    not undo a programme the student has picked.
+                  */}
+                  <input
+                    type="hidden"
+                    name="cursusId"
+                    value={onlyCursus?.id ?? cursusId ?? ''}
+                  />
+                  <button
+                    type="submit"
+                    aria-pressed={kind === 'approfondi'}
+                    className={`${CARD} flex h-full w-full flex-col items-start ${
+                      kind === 'approfondi' ? CARD_ON : CARD_OFF
+                    }`}
+                  >
+                    <span
+                      className="flex size-10 items-center justify-center rounded-lg bg-brand-50 text-brand-600"
+                      aria-hidden="true"
+                    >
+                      <GraduationCap className="size-5" />
+                    </span>
+                    <span className="mt-4 font-display text-[16px] font-semibold text-ink">
+                      {t('cursusApprofondiName')}
+                    </span>
+                    <span className="mt-2 text-[13px] leading-relaxed text-ink-muted">
+                      {t('cursusApprofondiBody')}
+                    </span>
+                    <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-2.5 py-1 text-[11px] font-medium text-brand-700">
+                      <Award className="size-3.5" aria-hidden="true" />
+                      {t('certificationApprofondi')}
+                    </span>
+                    {onlyCursus && onlyCursus.yearCount > 1 && (
+                      <span className="mt-2 text-[11px] text-brand-600">
+                        {t('yearLabel', { year: onlyCursus.yearCount })}
+                      </span>
+                    )}
+                    <PendingSpinner className="absolute end-4 top-4 text-brand-600" />
+                  </button>
+                </form>
+              </li>
+            )}
           </ul>
         ) : (
           <Empty>{t('formuleNone')}</Empty>
         ),
     },
+    ...cursusChoiceSteps,
     {
       key: 'mode',
       label: t('steps.mode'),
@@ -701,9 +788,12 @@ export async function CheckoutFlow({
   // On a module's own page the module list is not a question: the module is
   // the subject. The years step stays, because choosing the approfondi route
   // means choosing a year. The route question itself is the first step — see
-  // the cursus panel above.
+  // the cursus panel above. Neither the years nor the programme choice belongs
+  // to a student who chose the module alone.
   const steps =
-    kind !== 'approfondi' ? allSteps.filter((step) => step.key !== 'modules') : allSteps;
+    kind === 'approfondi'
+      ? allSteps
+      : allSteps.filter((step) => step.key !== 'modules' && step.key !== 'cursusType');
 
   return (
     <CheckoutWizard

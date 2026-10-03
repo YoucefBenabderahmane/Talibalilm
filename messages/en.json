@@ -297,6 +297,7 @@
     "step": "Step {current} of {total}",
     "steps": {
       "formule": "Your option",
+      "cursus": "Your cursus",
       "mode": "On site or distance",
       "modules": "Your modules",
       "info": "Your details",
@@ -343,6 +344,8 @@
     "buyCursus": "Buy the Cursus Approfondi",
     "cursusApprofondiName": "Cursus Approfondi",
     "cursusApprofondiBody": "A structured programme across several years, built for study in depth.",
+    "cursusChoiceTitle": "Which Cursus Approfondi?",
+    "cursusChoiceLead": "This module is part of more than one programme. Choose the one that fits you.",
     "modeLead": "The programme and the price differ by mode. Choose the one that suits you.",
     "modePresentiel": "On site",
     "modePresentielBody": "At the institute in Montereau-Fault-Yonne, at the published times.",

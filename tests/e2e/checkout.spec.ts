@@ -94,6 +94,28 @@ test.describe('checkout', () => {
     await expect(card.getByText(/600\s*€/).first()).toHaveText(/600\s*€/);
   });
 
+  test('a module in two programmes asks which one', async ({ page }) => {
+    // `fiqh-al-ibadat` is gridded into both e2e approfondis, so the card is the
+    // same for each and the choice is a step of its own. The generic card is
+    // visible; the two programme cards in the next panel are still hidden when
+    // the click happens, hence the `visible` filter.
+    await page.goto('/courses/fiqh-al-ibadat#inscription');
+    const card = page.locator('#inscription');
+
+    await card
+      .locator('button[aria-pressed]')
+      .filter({ hasText: 'Cursus Approfondi', visible: true })
+      .click();
+
+    await expect(card.getByRole('heading', { name: 'Quel Cursus Approfondi ?' })).toBeVisible();
+    await card
+      .locator('button[aria-pressed]')
+      .filter({ hasText: 'Cursus Approfondi pour ados' })
+      .click();
+
+    await expect(card.getByRole('heading', { name: 'Présentiel ou distanciel' })).toBeVisible();
+  });
+
   test('no amount is posted from the browser', async ({ page }) => {
     // Prices are recomputed server-side on every step. A hidden input carrying
     // cents would be a way to pay less, so there must not be one anywhere in

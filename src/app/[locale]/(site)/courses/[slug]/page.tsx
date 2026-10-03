@@ -129,31 +129,31 @@ export default async function CoursePage({
 
   // Which cursus this module belongs to, from the programme grid the cursus
   // screen writes. That is what decides whether the checkout offers the
-  // approfondi route on this page; the à-la-carte route is always offered once
-  // the module has a price, because every module is sold on its own.
+  // approfondi route on this page; the standalone module route is always
+  // offered once the module has a price, because every module is sold on its
+  // own.
   //
-  // ONE approfondi, not every row that matches. The school's model has a single
-  // Approfondi (`cursus_kind` holds two values and the checkout draws one card
-  // per route), but the table never enforced it, and a second published row
-  // containing the same module rendered the same card twice. The first in
-  // display order is the one the checkout offers.
+  // ALL of them, not the first. The school runs more than one Approfondi — an
+  // adult programme and a teenage one — and a module can sit in both. The
+  // checkout asks which one when there is a choice; drawing only the first was
+  // the duplication read backwards, and it silently hid the other programme.
   const { data: gridRows } = await supabase
     .from('cursus_courses')
     .select('cursus_id')
     .eq('course_id', course.id);
   const inCursus = new Set((gridRows ?? []).map((row) => row.cursus_id));
-  const approfondi =
-    cursusList.find((c) => c.kind === 'approfondi' && inCursus.has(c.id)) ?? null;
-  const approfondiId = approfondi?.id ?? null;
+  const approfondiOptions = cursusList.filter(
+    (c) => c.kind === 'approfondi' && inCursus.has(c.id),
+  );
+  const approfondiIds = approfondiOptions.map((c) => c.id);
 
-  // The cursus programme this module belongs to, when there is something to
+  // The cursus programmes this module belongs to, when there is something to
   // show — the office's poster and/or the written outline. Shown under the
   // module's own programme, so a student reading what is taught here also sees
-  // the whole cursus it is part of.
-  const cursusProgrammes =
-    approfondi && (approfondi.imageUrl !== null || approfondi.details.trim() !== '')
-      ? [approfondi]
-      : [];
+  // the whole programme it is part of.
+  const cursusProgrammes = approfondiOptions.filter(
+    (c) => c.imageUrl !== null || c.details.trim() !== '',
+  );
 
   // How this module is sold, from its own price lines: a module that costs
   // nothing opens directly, one that costs anything goes through the checkout.
@@ -603,7 +603,7 @@ export default async function CoursePage({
                   slug: course.slug,
                   title: course.title,
                   hasTariff: entries.length > 0,
-                  approfondiId,
+                  approfondiIds,
                   freeModes,
                   paidModes,
                 }}

@@ -130,7 +130,11 @@ values
   ('e2e30000-0000-4000-8000-000000000002', 'e2e-cursus-approfondi', 'approfondi',
    'Cursus Approfondi', 'Formation sur quatre ans',
    'Deux matières par an, pour approfondir les connaissances.',
-   4, 'published', 4)
+   4, 'published', 4),
+  ('e2e30000-0000-4000-8000-000000000003', 'e2e-cursus-approfondi-ados', 'approfondi',
+   'Cursus Approfondi pour ados', 'Formation sur trois ans',
+   'Le même enseignement, au rythme et aux matières adaptés aux plus jeunes.',
+   3, 'published', 5)
 on conflict (id) do nothing;
 
 -- --- the programme year one of the Approfondi, for the cursus step ----------
@@ -143,4 +147,14 @@ where c.id in (
   'e2e00000-0000-4000-8000-000000000001',
   'e2e00000-0000-4000-8000-000000000002'
 )
+on conflict do nothing;
+
+-- The same module in a second programme, so the checkout has a choice to ask
+-- about. `sciences-du-coran` stays in one programme only, which is the other
+-- half of the rule: a single programme must not show the choice step.
+insert into public.cursus_courses (cursus_id, course_id, delivery, year_index, position)
+select 'e2e30000-0000-4000-8000-000000000003', c.id, d.delivery, 1, c.display_order
+from public.courses c
+cross join (values ('presentiel'::public.delivery_mode), ('online'::public.delivery_mode)) as d (delivery)
+where c.id = 'e2e00000-0000-4000-8000-000000000001'
 on conflict do nothing;

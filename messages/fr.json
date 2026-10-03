@@ -297,6 +297,7 @@
     "step": "Étape {current} sur {total}",
     "steps": {
       "formule": "Votre formule",
+      "cursus": "Votre cursus",
       "mode": "Présentiel ou distanciel",
       "modules": "Vos modules",
       "info": "Informations",
@@ -343,6 +344,8 @@
     "buyCursus": "Acheter le Cursus Approfondi",
     "cursusApprofondiName": "Cursus Approfondi",
     "cursusApprofondiBody": "Un programme structuré sur plusieurs années, pensé pour une formation de fond.",
+    "cursusChoiceTitle": "Quel Cursus Approfondi ?",
+    "cursusChoiceLead": "Ce module fait partie de plusieurs programmes. Choisissez celui qui vous correspond.",
     "modeLead": "Le programme et le tarif diffèrent selon le mode. Choisissez celui qui vous convient.",
     "modePresentiel": "Présentiel",
     "modePresentielBody": "À l’institut, à Montereau-Fault-Yonne, aux horaires annoncés.",
