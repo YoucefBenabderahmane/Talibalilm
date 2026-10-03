@@ -643,6 +643,7 @@
     "content": "Lesson content",
     "videoId": "Recording link (YouTube or Google Drive)",
     "videoIdHint": "Paste the full link to the recorded session. Students see the player inside the lesson; only people who bought the module can open the page.",
+    "videoIdUploadedHint": "An uploaded video is in place. Leaving this field empty keeps it; pasting a YouTube or Drive link will replace it.",
     "moveUp": "Move up",
     "moveDown": "Move down",
     "empty": "No modules yet.",

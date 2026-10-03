@@ -47,7 +47,15 @@ export function LessonVideoUpload({
   const inputRef = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<AdminState>(IDLE);
   const [percent, setPercent] = useState<number | null>(null);
-  const hasVideo = provider === 'r2' && bytes > 0;
+  /**
+   * The upload's own result. The props come from the server render, and until
+   * the route re-renders after `finish` they still say "no video" — which
+   * reads as "the upload vanished". This makes the size and the Remove button
+   * appear the moment R2 accepted the file.
+   */
+  const [uploaded, setUploaded] = useState<{ bytes: number } | null>(null);
+  const hasVideo = (provider === 'r2' && bytes > 0) || uploaded !== null;
+  const shownBytes = uploaded?.bytes ?? bytes;
 
   const send = useCallback(
     async (file: File) => {
@@ -107,7 +115,9 @@ export function LessonVideoUpload({
       }
 
       setPercent(null);
-      setState(await finishLessonVideoUpload({ lessonId, key: ticket.key }));
+      const result = await finishLessonVideoUpload({ lessonId, key: ticket.key });
+      if (result.ok) setUploaded({ bytes: file.size });
+      setState(result);
     },
     [lessonId],
   );
@@ -117,7 +127,7 @@ export function LessonVideoUpload({
       <div className="flex flex-wrap items-center gap-2">
         <Film className="size-4 text-ink-muted" aria-hidden="true" />
         <p className="text-[13px] font-medium text-ink">{t('videoUpload')}</p>
-        {hasVideo && <span className="text-[12px] text-ink-muted">{formatBytes(bytes)}</span>}
+        {hasVideo && <span className="text-[12px] text-ink-muted">{formatBytes(shownBytes)}</span>}
       </div>
 
       <p className="mt-1 text-[11px] leading-relaxed text-ink-muted">{t('videoUploadHint')}</p>
@@ -167,7 +177,9 @@ export function LessonVideoUpload({
                 className="text-red-600 hover:text-red-700"
                 onClick={async () => {
                   if (!window.confirm(t('videoRemoveConfirm'))) return;
-                  setState(await removeLessonVideo({ lessonId }));
+                  const result = await removeLessonVideo({ lessonId });
+                  if (result.ok) setUploaded(null);
+                  setState(result);
                 }}
               >
                 <Trash2 className="size-3.5" aria-hidden="true" />

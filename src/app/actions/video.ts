@@ -135,15 +135,22 @@ export async function finishLessonVideoUpload(input: {
     await deleteObject(existing.video_id);
   }
 
+  // Upsert, not update: a lesson whose content row is missing (a seeded or
+  // pre-`addLesson` one) used to update zero rows and answer `{ ok: true }` —
+  // the upload looked saved and no row pointed at the object. Only the video
+  // columns are written, so an existing row keeps its text.
   const { error } = await supabase
     .from('lesson_content')
-    .update({
-      video_provider: 'r2',
-      video_id: key,
-      video_bytes: object.size,
-      video_uploaded_at: new Date().toISOString(),
-    })
-    .eq('lesson_id', lessonId);
+    .upsert(
+      {
+        lesson_id: lessonId,
+        video_provider: 'r2',
+        video_id: key,
+        video_bytes: object.size,
+        video_uploaded_at: new Date().toISOString(),
+      },
+      { onConflict: 'lesson_id' },
+    );
 
   if (error) {
     reportError('video.save', error, { lessonId });
