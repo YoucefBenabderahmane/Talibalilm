@@ -396,8 +396,6 @@
     "payTitle": "Payment",
     "payLead": "The amount is worked out by our servers from your selection; your browser never sends one.",
     "payWithPaypal": "Pay with PayPal",
-    "payOffice": "Pay at the institute",
-    "payOfficeBody": "Pay in cash at reception: we hand you a code to enter at the previous step, and your access opens straight away.",
     "payPending": "PayPal payment is wired up in the next stage of the build; the summary below is already the one that will be charged.",
     "confirmTitle": "Enrolment confirmed",
     "confirmLead": "Your access is open. You will find it in your space.",

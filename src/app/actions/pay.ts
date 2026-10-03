@@ -598,61 +598,6 @@ const codeSchema = z
   .regex(/^[A-Z0-9-]{6,32}$/);
 
 /**
- * The front desk's cash route.
- *
- * The student pays in the office, is handed a single-use 100 %-off code, and
- * types it here. It produces exactly the same `orders` and `entitlements` rows
- * as a card payment, through the same `grant_order_entitlements` — which is the
- * requirement, not an implementation detail.
- */
-export async function redeemOfficeCode(_previous: PayState, formData: FormData): Promise<PayState> {
-  const locale = await getLocale();
-  const user = await requireUser();
-
-  // The one path where guessing pays: a valid office code is a year of access
-  // for free. A shared, durable counter is what makes brute force uneconomical.
-  if (!(await throttle('office-code', 10, user.id))) return { error: 'rateLimited' };
-  if (!(await isApproved())) return { error: 'notApproved' };
-  if (!profileComplete(await getStudentProfile())) return { error: 'profileRequired' };
-
-  const parsed = codeSchema.safeParse(formData.get('code') ?? '');
-  if (!parsed.success) return { error: 'codeInvalid' };
-
-  const { selection, quote } = await loadBasket();
-  if (!quote || !selection.delivery) redirect({ href: '/courses', locale });
-
-  const afterOffers = quote.subtotalCents - (quote.discountCents - quote.couponDiscountCents);
-  const coupon = await claimCoupon(parsed.data, afterOffers);
-  if (!coupon) return { error: 'codeRefused' };
-
-  let order;
-  try {
-    order = await createPendingOrder({
-      userId: user.id,
-      delivery: selection.delivery,
-      route: 'office',
-      quote,
-      couponId: coupon.id,
-      couponDiscountCents: coupon.discountCents,
-    });
-  } catch (cause) {
-    await releaseCoupon(coupon.id);
-    if (cause instanceof PackExhaustedError) return { error: 'packExhausted' };
-    if (cause instanceof MixedCurrencyError) return { error: 'mixedCurrency' };
-    throw cause;
-  }
-
-  // A code worth less than the basket leaves something to pay. Rather than
-  // half-granting, the order stands and the student is sent to PayPal for the
-  // rest — the coupon is already attached to it.
-  if (order.totalCents > 0) return { error: 'codePartial' };
-
-  await settleFreeOrder(order.id);
-  await clearSelection();
-  redirect({ href: await checkoutTarget(order.id), locale });
-}
-
-/**
  * Where a paid order should open.
  *
  * A module opens its own page, where every lesson is a link because the

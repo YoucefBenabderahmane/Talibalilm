@@ -396,8 +396,6 @@
     "payTitle": "Paiement",
     "payLead": "Le montant est calculé par nos serveurs à partir de votre sélection ; il n’est jamais transmis par votre navigateur.",
     "payWithPaypal": "Payer avec PayPal",
-    "payOffice": "Régler à l’institut",
-    "payOfficeBody": "Réglez en espèces à l’accueil : on vous remet un code à saisir à l’étape précédente, et votre accès s’ouvre aussitôt.",
     "payPending": "Le paiement PayPal est branché à l’étape suivante du chantier ; le récapitulatif ci-dessous est déjà celui qui sera facturé.",
     "confirmTitle": "Inscription confirmée",
     "confirmLead": "Votre accès est ouvert. Vous le retrouvez dans votre espace.",
