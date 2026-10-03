@@ -19,7 +19,7 @@ import { listCursus, listProducts } from '@/lib/data/commerce';
 import { moduleRoutes } from '@/lib/commerce/module-modes';
 import { listLiveSessions } from '@/lib/data/live';
 import { institut } from '@/lib/content/institut';
-import { lessonCount } from '@/lib/content/types';
+import { courseLessons, lessonCount } from '@/lib/content/types';
 import { siteUrl } from '@/lib/env';
 import { requireLocale, routing } from '@/i18n/routing';
 import { cn } from '@/lib/utils';
@@ -112,6 +112,14 @@ export default async function CoursePage({
   // would return an empty list anyway.
   const myClasses =
     owned && viewer ? await listClassesForStudent(course.id, viewer.id) : null;
+
+  // Where choosing a class lands: the first lesson, so the click enters the
+  // module rather than just recording a group. A module with no lessons yet
+  // falls back to this page, which still shows the class as chosen.
+  const firstLesson = owned ? (courseLessons(course)[0] ?? null) : null;
+  const enterHref = firstLesson
+    ? `/dashboard/courses/${course.slug}/lessons/${firstLesson.id}`
+    : `/courses/${course.slug}`;
 
   const t = await getTranslations('courses');
   const tCommon = await getTranslations('common');
@@ -538,7 +546,11 @@ export default async function CoursePage({
               {t('detail.myClassLead')}
             </p>
             <div className="mt-6">
-              <ClassPicker classes={myClasses.classes} myClassId={myClasses.myClassId} />
+              <ClassPicker
+                classes={myClasses.classes}
+                myClassId={myClasses.myClassId}
+                enterHref={enterHref}
+              />
             </div>
           </div>
         </section>

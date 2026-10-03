@@ -220,7 +220,7 @@
       "liveNow": "En cours",
       "myClassTitle": "Votre classe",
       "myClassLead": "Ce module est enseigné à plusieurs groupes. Choisissez le vôtre : il ouvre les séances en direct.",
-      "classMine": "Votre classe",
+      "classEnter": "Entrer",
       "classLeave": "Quitter cette classe",
       "classNotAllowed": "Cette classe n’est pas ouverte pour ce module.",
       "classSaveFailed": "L’enregistrement a échoué. Réessayez.",

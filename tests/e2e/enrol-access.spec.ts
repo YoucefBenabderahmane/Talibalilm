@@ -118,11 +118,12 @@ test.describe('the module page and who holds it', () => {
       new RegExp(`/dashboard/courses/${slug}/lessons/`),
     );
 
-    // The group is the student's to choose, and the choice sticks.
+    // The group is the student's to choose, and the click enters the module:
+    // it lands on the first lesson, not merely a recorded choice.
     await expect(page.getByRole('heading', { name: 'Votre classe' })).toBeVisible();
     const group = page.getByRole('button', { name: new RegExp(groupName) });
     await group.click();
-    await expect(group).toHaveAttribute('aria-pressed', 'true');
+    await expect(page).toHaveURL(new RegExp(`/dashboard/courses/${slug}/lessons/`));
   });
 });
 
