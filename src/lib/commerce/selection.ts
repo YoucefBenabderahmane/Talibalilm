@@ -94,3 +94,29 @@ export function furthestStep(selection: Selection): 1 | 2 | 3 | 4 {
   if (selection.productIds.length === 0) return 3;
   return 4;
 }
+
+/**
+ * The selection after a route card is pressed.
+ *
+ * Choosing a different route — or a different cursus — starts the downstream
+ * answers over: the mode, the year and the products belong to the route that
+ * was chosen before, and keeping them would price a basket the student can no
+ * longer see.
+ *
+ * The subtle half is the comparison. A module and a not-yet-chosen approfondi
+ * both carry `cursusId = null` (the approfondi is waiting for its programme),
+ * so comparing the cursus alone would keep a module's basket when the student
+ * switches to the approfondi route. The KIND has to match too.
+ */
+export function afterCursusChoice(
+  current: Selection,
+  choice: { kind: 'module' | 'approfondi'; cursusId: string | null; courseId: string | null },
+): Selection {
+  // An approfondi is a cursus, not a module: whatever module page the student
+  // was reading, it must not stay pinned to it.
+  const courseId = choice.kind === 'approfondi' ? null : choice.courseId;
+  const sameRoute = current.kind === choice.kind && current.cursusId === choice.cursusId;
+  return sameRoute
+    ? { ...current, ...choice, courseId }
+    : { ...EMPTY_SELECTION, ...choice, courseId };
+}

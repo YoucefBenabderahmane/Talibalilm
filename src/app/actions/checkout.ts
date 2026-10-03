@@ -3,10 +3,10 @@
 import { z } from 'zod';
 import { headers } from 'next/headers';
 import {
+  afterCursusChoice,
   EMPTY_SELECTION,
   readSelection,
   writeSelection,
-  type Selection,
 } from '@/lib/commerce/selection';
 import { listProducts } from '@/lib/data/commerce';
 import { clientKey, rateLimit } from '@/lib/rate-limit';
@@ -25,25 +25,24 @@ import { clientKey, rateLimit } from '@/lib/rate-limit';
  * sees the new `furthest` and moves itself on.
  */
 
-const kindSchema = z
-  .object({
-    kind: z.enum(['module', 'approfondi']),
-    /**
-     * The approfondi route is a cursus and cannot exist without one. The
-     * standalone module route names no cursus at all: a module is sold on its
-     * own whether or not any cursus lists it, and requiring the "Par module"
-     * row here meant a project without it could not sell a single module —
-     * the click was dropped without a word.
-     */
-    cursusId: z.string().uuid().nullable().catch(null),
-    /**
-     * Present on the module page's "Acheter ce module" card: the course is what
-     * turns into a product once the mode is answered. The approfondi card sends
-     * none, and the selection's courseId is cleared with it.
-     */
-    courseId: z.string().uuid().nullable().catch(null),
-  })
-  .refine((v) => v.kind !== 'approfondi' || v.cursusId !== null, { message: 'cursusRequired' });
+const kindSchema = z.object({
+  kind: z.enum(['module', 'approfondi']),
+  /**
+   * The cursus, when the route names one. A module names none — it is sold on
+   * its own whether or not any cursus lists it — and neither does an approfondi
+   * whose programme the student has not chosen yet: the card is the same for
+   * every Approfondi, and the choice is the step after it. Nothing can be paid
+   * in that state (`loadBasket` finds no product), so the empty value is a
+   * question still open, not a shortcut.
+   */
+  cursusId: z.string().uuid().nullable().catch(null),
+  /**
+   * Present on the module page's "Acheter ce module" card: the course is what
+   * turns into a product once the mode is answered. The approfondi card sends
+   * none, and the selection's courseId is cleared with it.
+   */
+  courseId: z.string().uuid().nullable().catch(null),
+});
 
 const deliverySchema = z.object({
   delivery: z.enum(['presentiel', 'online']),
@@ -66,19 +65,9 @@ export async function chooseCursus(formData: FormData): Promise<void> {
   if (!parsed.success) return;
 
   const current = await readSelection();
-  // An approfondi basket is a cursus, not a module: whatever module page the
-  // student was reading, it must not stay pinned to it.
-  const courseId = parsed.data.kind === 'approfondi' ? null : parsed.data.courseId;
-
-  // Changing cursus invalidates everything downstream: the products on offer
-  // are different, so keeping the old ids would price a basket the student can
-  // no longer see.
-  const next: Selection =
-    current.cursusId === parsed.data.cursusId
-      ? { ...current, ...parsed.data, courseId }
-      : { ...EMPTY_SELECTION, ...parsed.data, courseId };
-
-  await writeSelection(next);
+  // Changing route or cursus invalidates everything downstream; `afterCursusChoice`
+  // owns that rule (and the module/approfondi distinction that makes it work).
+  await writeSelection(afterCursusChoice(current, parsed.data));
 }
 
 export async function chooseDelivery(formData: FormData): Promise<void> {
