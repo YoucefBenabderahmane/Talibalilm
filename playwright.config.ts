@@ -33,8 +33,20 @@ export default defineConfig({
     launchOptions,
   },
   projects: [
-    { name: 'desktop', use: { ...devices['Desktop Chrome'] } },
-    { name: 'mobile', use: { ...devices['Pixel 7'] } },
+    // A distinct client address per project. The register form is limited to
+    // five attempts per address in fifteen minutes, and both projects submit
+    // it; without this they share one bucket and the later project is refused
+    // by the throttle rather than by the rule under test. Vercel sets this
+    // header in production — here it only tells the limiter that the two
+    // browsers are two clients, which they are.
+    {
+      name: 'desktop',
+      use: { ...devices['Desktop Chrome'], extraHTTPHeaders: { 'x-forwarded-for': '10.0.0.1' } },
+    },
+    {
+      name: 'mobile',
+      use: { ...devices['Pixel 7'], extraHTTPHeaders: { 'x-forwarded-for': '10.0.0.2' } },
+    },
   ],
   webServer: {
     command: `npx next start --port ${PORT}`,
