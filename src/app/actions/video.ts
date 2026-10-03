@@ -45,6 +45,7 @@ export interface VideoTicket extends AdminState {
 
 const startSchema = z.object({
   lessonId: z.string().uuid(),
+  classId: z.string().uuid(),
   contentType: z.enum(['video/mp4', 'video/webm']),
   // What the browser SAYS the file weighs. Refusing an obviously oversized file
   // here saves an hour of uploading before the rejection — but it is a
@@ -54,6 +55,7 @@ const startSchema = z.object({
 
 export async function startLessonVideoUpload(input: {
   lessonId: string;
+  classId: string;
   contentType: string;
   size: number;
 }): Promise<VideoTicket> {
@@ -68,17 +70,27 @@ export async function startLessonVideoUpload(input: {
   const supabase = await staffClient();
 
   // Through the ordinary client, so the policy decides whether this lesson is
-  // visible rather than a condition written here.
-  const { data: lesson, error } = await supabase
-    .from('lessons')
-    .select('id')
-    .eq('id', parsed.data.lessonId)
-    .maybeSingle();
+  // visible rather than a condition written here. The class must belong to the
+  // lesson's own module: a hand-posted pair must not file a Fiqh recording on
+  // a Hadith group.
+  const [{ data: lesson, error }, { data: klass }] = await Promise.all([
+    supabase
+      .from('lessons')
+      .select('id, modules ( course_id )')
+      .eq('id', parsed.data.lessonId)
+      .maybeSingle(),
+    supabase
+      .from('classes')
+      .select('id, course_id')
+      .eq('id', parsed.data.classId)
+      .maybeSingle(),
+  ]);
   if (error) {
     reportError('video.lookup', error, { lessonId: parsed.data.lessonId });
     return { ok: false, error: 'saveFailed', detail: errorDetail(error) };
   }
-  if (!lesson) return { ok: false, error: 'invalid' };
+  const lessonCourse = (lesson?.modules as { course_id: string } | null)?.course_id ?? null;
+  if (!lesson || !klass || lessonCourse !== klass.course_id) return { ok: false, error: 'invalid' };
 
   const extension = parsed.data.contentType === 'video/webm' ? 'webm' : 'mp4';
   const key = videoKey(parsed.data.lessonId, extension, slideName());
@@ -94,18 +106,20 @@ export async function startLessonVideoUpload(input: {
 
 const finishSchema = z.object({
   lessonId: z.string().uuid(),
+  classId: z.string().uuid(),
   key: z.string().max(300),
 });
 
 export async function finishLessonVideoUpload(input: {
   lessonId: string;
+  classId: string;
   key: string;
 }): Promise<AdminState> {
   if (!r2Configured) return { ok: false, error: 'storageUnavailable' };
 
   const parsed = finishSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: 'invalid' };
-  const { lessonId, key } = parsed.data;
+  const { lessonId, classId, key } = parsed.data;
 
   // Is this a key we would have issued for THIS lesson? A caller naming another
   // lesson's object stops here, before R2 is touched.
@@ -127,33 +141,35 @@ export async function finishLessonVideoUpload(input: {
   // the alternative leaves a file nobody can ever find and nobody stops paying
   // for.
   const { data: existing } = await supabase
-    .from('lesson_content')
+    .from('class_lesson_content')
     .select('video_provider, video_id')
     .eq('lesson_id', lessonId)
+    .eq('class_id', classId)
     .maybeSingle();
   if (existing?.video_provider === 'r2' && existing.video_id && existing.video_id !== key) {
     await deleteObject(existing.video_id);
   }
 
-  // Upsert, not update: a lesson whose content row is missing (a seeded or
-  // pre-`addLesson` one) used to update zero rows and answer `{ ok: true }` —
-  // the upload looked saved and no row pointed at the object. Only the video
-  // columns are written, so an existing row keeps its text.
+  // Upsert, not update: a class whose content row is missing used to update
+  // zero rows and answer `{ ok: true }` — the upload looked saved and no row
+  // pointed at the object. Only the video columns are written, so an existing
+  // row keeps its text.
   const { error } = await supabase
-    .from('lesson_content')
+    .from('class_lesson_content')
     .upsert(
       {
         lesson_id: lessonId,
+        class_id: classId,
         video_provider: 'r2',
         video_id: key,
         video_bytes: object.size,
         video_uploaded_at: new Date().toISOString(),
       },
-      { onConflict: 'lesson_id' },
+      { onConflict: 'class_id,lesson_id' },
     );
 
   if (error) {
-    reportError('video.save', error, { lessonId });
+    reportError('video.save', error, { lessonId, classId });
     await deleteObject(key);
     return { ok: false, error: 'saveFailed', detail: errorDetail(error) };
   }
@@ -173,17 +189,23 @@ export async function finishLessonVideoUpload(input: {
  * a cost; a row pointing at an object that may or may not exist is a broken
  * player for every student. The failure is reported either way.
  */
-export async function removeLessonVideo(input: { lessonId: string }): Promise<AdminState> {
-  const parsed = z.object({ lessonId: z.string().uuid() }).safeParse(input);
+export async function removeLessonVideo(input: {
+  lessonId: string;
+  classId: string;
+}): Promise<AdminState> {
+  const parsed = z
+    .object({ lessonId: z.string().uuid(), classId: z.string().uuid() })
+    .safeParse(input);
   if (!parsed.success) return { ok: false, error: 'invalid' };
-  const { lessonId } = parsed.data;
+  const { lessonId, classId } = parsed.data;
 
   const supabase = await staffClient();
 
   const { data: row } = await supabase
-    .from('lesson_content')
+    .from('class_lesson_content')
     .select('video_provider, video_id')
     .eq('lesson_id', lessonId)
+    .eq('class_id', classId)
     .maybeSingle();
 
   if (row?.video_provider === 'r2' && row.video_id) {
@@ -191,7 +213,7 @@ export async function removeLessonVideo(input: { lessonId: string }): Promise<Ad
   }
 
   const { error } = await supabase
-    .from('lesson_content')
+    .from('class_lesson_content')
     .update({
       video_provider: 'none',
       video_id: null,
@@ -199,10 +221,11 @@ export async function removeLessonVideo(input: { lessonId: string }): Promise<Ad
       video_uploaded_at: null,
       video_expires_at: null,
     })
-    .eq('lesson_id', lessonId);
+    .eq('lesson_id', lessonId)
+    .eq('class_id', classId);
 
   if (error) {
-    reportError('video.remove', error, { lessonId });
+    reportError('video.remove', error, { lessonId, classId });
     return { ok: false, error: 'saveFailed', detail: errorDetail(error) };
   }
 
@@ -218,10 +241,15 @@ export async function removeLessonVideo(input: { lessonId: string }): Promise<Ad
  */
 export async function setVideoRetention(input: {
   lessonId: string;
+  classId: string;
   months: number | null;
 }): Promise<AdminState> {
   const parsed = z
-    .object({ lessonId: z.string().uuid(), months: z.number().int().min(1).max(60).nullable() })
+    .object({
+      lessonId: z.string().uuid(),
+      classId: z.string().uuid(),
+      months: z.number().int().min(1).max(60).nullable(),
+    })
     .safeParse(input);
   if (!parsed.success) return { ok: false, error: 'invalid' };
 
@@ -232,9 +260,10 @@ export async function setVideoRetention(input: {
 
   const supabase = await staffClient();
   const { error } = await supabase
-    .from('lesson_content')
+    .from('class_lesson_content')
     .update({ video_expires_at: expires })
-    .eq('lesson_id', parsed.data.lessonId);
+    .eq('lesson_id', parsed.data.lessonId)
+    .eq('class_id', parsed.data.classId);
 
   if (error) {
     reportError('video.retention', error, { lessonId: parsed.data.lessonId });

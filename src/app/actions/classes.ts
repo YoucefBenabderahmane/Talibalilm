@@ -100,6 +100,50 @@ export async function deleteClass(_prev: AdminState, formData: FormData): Promis
   return OK;
 }
 
+/**
+ * Where the group is, so students see their class's position rather than the
+ * module's. An empty value clears it. The lesson must belong to the class's own
+ * module — the dropdown offers only those, but a hand-posted pair must not file
+ * a Fiqh lesson on a Hadith group.
+ */
+export async function setClassCurrentLesson(
+  _prev: AdminState,
+  formData: FormData,
+): Promise<AdminState> {
+  const parsed = z
+    .object({
+      id: z.string().uuid(),
+      lessonId: z.string().uuid().nullable().catch(null),
+    })
+    .safeParse({ id: formData.get('id'), lessonId: formData.get('lessonId') || null });
+  if (!parsed.success) return { ok: false, error: 'invalid' };
+
+  const supabase = await staffClient();
+
+  if (parsed.data.lessonId) {
+    const [{ data: klass }, { data: lesson }] = await Promise.all([
+      supabase.from('classes').select('course_id').eq('id', parsed.data.id).maybeSingle(),
+      supabase
+        .from('lessons')
+        .select('id, modules ( course_id )')
+        .eq('id', parsed.data.lessonId)
+        .maybeSingle(),
+    ]);
+    const lessonCourse = (lesson?.modules as { course_id: string } | null)?.course_id ?? null;
+    if (!klass || lessonCourse !== klass.course_id) return { ok: false, error: 'invalid' };
+  }
+
+  const { error } = await supabase
+    .from('classes')
+    .update({ current_lesson_id: parsed.data.lessonId })
+    .eq('id', parsed.data.id);
+  if (error) return { ok: false, error: 'saveFailed', detail: errorDetail(error) };
+
+  revalidatePath('/[locale]/admin/courses/[id]', 'page');
+  revalidatePath('/[locale]/courses/[slug]', 'page');
+  return OK;
+}
+
 /** The office taking a student out of a class (moving them is join-again). */
 export async function removeClassMember(_prev: AdminState, formData: FormData): Promise<AdminState> {
   const parsed = z

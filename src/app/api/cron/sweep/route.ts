@@ -266,35 +266,48 @@ export async function GET(request: NextRequest) {
  * R2 refuses must not strand every other expired video behind it.
  */
 async function purgeExpiredVideos(supabase: ReturnType<typeof createAdminClient>): Promise<number> {
-  const { data: due, error } = await supabase
-    .from('lesson_content')
-    .select('lesson_id, video_id')
-    .eq('video_provider', 'r2')
-    .not('video_expires_at', 'is', null)
-    .lte('video_expires_at', new Date().toISOString())
-    .limit(50);
+  const now = new Date().toISOString();
 
-  if (error) {
-    console.error('[cron] expired-video lookup failed:', error.message);
-    return 0;
-  }
-  if (!due || due.length === 0) return 0;
+  // Two homes now: the shared row (a preview's video) and the per-class rows.
+  const [{ data: shared, error }, { data: perClass, error: classError }] = await Promise.all([
+    supabase
+      .from('lesson_content')
+      .select('lesson_id, video_id')
+      .eq('video_provider', 'r2')
+      .not('video_expires_at', 'is', null)
+      .lte('video_expires_at', now)
+      .limit(50),
+    supabase
+      .from('class_lesson_content')
+      .select('class_id, lesson_id, video_id')
+      .eq('video_provider', 'r2')
+      .not('video_expires_at', 'is', null)
+      .lte('video_expires_at', now)
+      .limit(50),
+  ]);
+
+  if (error) console.error('[cron] expired-video lookup failed:', error.message);
+  if (classError) console.error('[cron] expired class-video lookup failed:', classError.message);
+  if ((!shared || shared.length === 0) && (!perClass || perClass.length === 0)) return 0;
 
   // The S3 client is only worth loading when there is an object to remove.
   const { deleteObject } = await import('@/lib/storage/r2');
 
+  const clear = {
+    video_provider: 'none' as const,
+    video_id: null,
+    video_bytes: 0,
+    video_uploaded_at: null,
+    video_expires_at: null,
+  };
+
   let removed = 0;
-  for (const row of due) {
+
+  for (const row of shared ?? []) {
     if (row.video_id) await deleteObject(row.video_id);
     const { error: clearError } = await supabase
       .from('lesson_content')
-      .update({
-        video_provider: 'none',
-        video_id: null,
-        video_bytes: 0,
-        video_uploaded_at: null,
-        video_expires_at: null,
-      })
+      .update(clear)
       .eq('lesson_id', row.lesson_id);
     if (clearError) {
       console.error('[cron] clearing video row failed:', clearError.message);
@@ -302,5 +315,20 @@ async function purgeExpiredVideos(supabase: ReturnType<typeof createAdminClient>
     }
     removed += 1;
   }
+
+  for (const row of perClass ?? []) {
+    if (row.video_id) await deleteObject(row.video_id);
+    const { error: clearError } = await supabase
+      .from('class_lesson_content')
+      .update(clear)
+      .eq('class_id', row.class_id)
+      .eq('lesson_id', row.lesson_id);
+    if (clearError) {
+      console.error('[cron] clearing class-video row failed:', clearError.message);
+      continue;
+    }
+    removed += 1;
+  }
+
   return removed;
 }

@@ -106,6 +106,11 @@ export function ClassPicker({
                 {klass.schedule && (
                   <span className="mt-1 text-[12px] text-ink-muted">{klass.schedule}</span>
                 )}
+                {klass.currentLessonTitle && (
+                  <span className="mt-1 text-[12px] text-ink-muted">
+                    {t('detail.classCurrentLesson', { lesson: klass.currentLessonTitle })}
+                  </span>
+                )}
               </button>
             </li>
           );
