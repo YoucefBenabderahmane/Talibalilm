@@ -27,6 +27,7 @@ test.describe('the module page and who holds it', () => {
   // Unique per worker: desktop and mobile run this describe at the same time
   // against one database, and a class name is unique per module.
   const groupName = `Classe E2E ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const classId = crypto.randomUUID();
   let userId = '';
   let slug = '';
 
@@ -78,9 +79,32 @@ test.describe('the module page and who holds it', () => {
     // built, and the student joins one themselves.
     const klass = await request.post(`${SUPABASE_URL}/rest/v1/classes`, {
       headers: { ...serviceHeaders, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-      data: { course_id: course.id, name: groupName, schedule: 'Samedi 9h – 12h' },
+      data: { id: classId, course_id: course.id, name: groupName, schedule: 'Samedi 9h – 12h' },
     });
     expect(klass.ok(), await klass.text()).toBeTruthy();
+
+    // The group's content for its first lesson. A YouTube link, because CI has
+    // no R2 — the point here is that the text and the player come from the
+    // class row, not from the lesson's shared one.
+    const lessons = await request.get(
+      `${SUPABASE_URL}/rest/v1/lessons?select=id,modules!inner(course_id)&modules.course_id=eq.${course.id}&order=position&limit=1`,
+      { headers: serviceHeaders },
+    );
+    expect(lessons.ok(), await lessons.text()).toBeTruthy();
+    const [firstLesson] = (await lessons.json()) as { id: string }[];
+    expect(firstLesson?.id, 'the seed must contain a lesson').toBeTruthy();
+
+    const content = await request.post(`${SUPABASE_URL}/rest/v1/class_lesson_content`, {
+      headers: { ...serviceHeaders, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+      data: {
+        class_id: classId,
+        lesson_id: firstLesson.id,
+        content: 'Support de la classe E2E',
+        video_provider: 'youtube',
+        video_id: 'dQw4w9WgXcQ',
+      },
+    });
+    expect(content.ok(), await content.text()).toBeTruthy();
   });
 
   test.afterAll(async ({ request }) => {
@@ -124,6 +148,11 @@ test.describe('the module page and who holds it', () => {
     const group = page.getByRole('button', { name: new RegExp(groupName) });
     await group.click();
     await expect(page).toHaveURL(new RegExp(`/dashboard/courses/${slug}/lessons/`));
+
+    // The lesson shows THIS group's text and player — the row the class owns,
+    // not the lesson's shared content.
+    await expect(page.getByText('Support de la classe E2E')).toBeVisible();
+    await expect(page.locator('iframe[src*="youtube-nocookie"]')).toBeVisible();
   });
 });
 

@@ -25,6 +25,16 @@ import { ActionForm } from '@/components/ui/action-form';
 
 const IDLE: AdminState = { ok: false };
 
+/** One group's content for one lesson — the row the lesson form edits. */
+export interface OutlineClassContent {
+  classId: string;
+  content: string;
+  videoId: string;
+  videoProvider: string;
+  videoBytes: number;
+  videoExpiresAt: string | null;
+}
+
 export interface OutlineLesson {
   id: string;
   title: string;
@@ -32,11 +42,14 @@ export interface OutlineLesson {
   position: number;
   minutes: number;
   isPreview: boolean;
+  /** The shared row: a public preview's content, and the legacy fallback. */
   content: string;
   videoId: string;
   videoProvider: string;
   videoBytes: number;
   videoExpiresAt: string | null;
+  /** Per group. The lesson form edits one of these, chosen by class. */
+  classContent: OutlineClassContent[];
 }
 
 export interface OutlineModule {
@@ -58,9 +71,12 @@ export interface OutlineModule {
 export function CourseOutline({
   courseId,
   modules,
+  classes,
 }: {
   courseId: string;
   modules: OutlineModule[];
+  /** The module's groups, in display order. A lesson's content is per group. */
+  classes: { id: string; name: string }[];
 }) {
   const t = useTranslations('admin');
   const [addState, addModuleAction] = useActionState(addModule, IDLE);
@@ -72,6 +88,7 @@ export function CourseOutline({
           <ModuleCard
             key={module.id}
             module={module}
+            classes={classes}
             previous={index > 0 ? modules[index - 1] : undefined}
             next={index < modules.length - 1 ? modules[index + 1] : undefined}
           />
@@ -98,10 +115,12 @@ export function CourseOutline({
 
 function ModuleCard({
   module,
+  classes,
   previous,
   next,
 }: {
   module: OutlineModule;
+  classes: { id: string; name: string }[];
   previous: OutlineModule | undefined;
   next: OutlineModule | undefined;
 }) {
@@ -147,6 +166,7 @@ function ModuleCard({
           <LessonRow
             key={lesson.id}
             lesson={lesson}
+            classes={classes}
             previous={index > 0 ? module.lessons[index - 1] : undefined}
             next={index < module.lessons.length - 1 ? module.lessons[index + 1] : undefined}
           />
@@ -170,10 +190,12 @@ function ModuleCard({
 
 function LessonRow({
   lesson,
+  classes,
   previous,
   next,
 }: {
   lesson: OutlineLesson;
+  classes: { id: string; name: string }[];
   previous: OutlineLesson | undefined;
   next: OutlineLesson | undefined;
 }) {
@@ -183,6 +205,9 @@ function LessonRow({
   const formRef = useRef<HTMLFormElement>(null);
   const [filling, startFill] = useTransition();
   const [fillNote, setFillNote] = useState<string | null>(null);
+  /** The group whose text and video the form is editing. */
+  const [classId, setClassId] = useState(classes[0]?.id ?? '');
+  const selected = lesson.classContent.find((row) => row.classId === classId) ?? null;
 
   /**
    * "Remplir": read the video link in the form, ask the video what it is, and
@@ -192,7 +217,7 @@ function LessonRow({
   const fill = () => {
     const form = formRef.current;
     if (!form) return;
-    const link = (form.elements.namedItem('video_id') as HTMLInputElement | null)?.value ?? '';
+    const link = (form.elements.namedItem('class_video_id') as HTMLInputElement | null)?.value ?? '';
     setFillNote(null);
 
     startFill(async () => {
@@ -207,8 +232,8 @@ function LessonRow({
         if (field && value) field.value = value;
       };
       if (result.title) set('title', result.title);
-      if (result.content) set('content', result.content);
-      if (result.videoId) set('video_id', result.videoId);
+      if (result.content) set('class_content', result.content);
+      if (result.videoId) set('class_video_id', result.videoId);
       set('type', 'video');
       setFillNote(t('lessonFilled'));
     });
@@ -272,6 +297,7 @@ function LessonRow({
           className="mt-4 space-y-3 rounded-[var(--radius-input)] bg-surface/50 p-4"
         >
           <input type="hidden" name="id" value={lesson.id} />
+          <input type="hidden" name="classId" value={classId} />
 
           {/* The title is the first thing read and the first thing filled, so
               it is bigger than the rest of the form and carries the one button
@@ -331,43 +357,103 @@ function LessonRow({
               min={0}
               defaultValue={lesson.minutes}
             />
-            <Field
-              label={t('videoId')}
-              name="video_id"
-              defaultValue={lesson.videoProvider === 'r2' ? '' : lesson.videoId}
-              hint={
-                lesson.videoProvider === 'r2' ? t('videoIdUploadedHint') : t('videoIdHint')
-              }
-              error={
-                state.error === 'video_unrecognised' || state.error === 'video_id_is_url'
-                  ? t('videoUnrecognised')
-                  : undefined
-              }
-            />
           </div>
 
-          {/*
-            The other way to give a lesson a video. Outside the form on
-            purpose: it uploads and saves on its own, so putting it inside
-            would make a half-finished upload part of whatever else the
-            teacher happens to be editing.
-          */}
-          <LessonVideoUpload
-            lessonId={lesson.id}
-            provider={lesson.videoProvider}
-            bytes={lesson.videoBytes}
-            expiresAt={lesson.videoExpiresAt}
-          />
+          {classes.length > 0 ? (
+            <>
+              <label className="block">
+                <span className="mb-1.5 block text-[13px] font-medium text-ink">
+                  {t('lessonClass')}
+                </span>
+                <select
+                  value={classId}
+                  onChange={(event) => setClassId(event.target.value)}
+                  className="w-full rounded-[var(--radius-input)] border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-brand-400"
+                >
+                  {classes.map((klass) => (
+                    <option key={klass.id} value={klass.id}>
+                      {klass.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          <label className="block">
-            <span className="mb-1.5 block text-[13px] font-medium text-ink">{t('content')}</span>
-            <textarea
-              name="content"
-              rows={8}
-              defaultValue={lesson.content}
-              className="w-full rounded-[var(--radius-input)] border border-line bg-white px-4 py-3 text-sm text-ink outline-none focus:border-brand-400"
-            />
-          </label>
+              {/* Remounted when the group changes, so every defaultValue is the
+                  selected group's and never the previous one's. */}
+              <div key={classId} className="grid gap-3">
+                <Field
+                  label={t('videoId')}
+                  name="class_video_id"
+                  defaultValue={selected?.videoProvider === 'r2' ? '' : (selected?.videoId ?? '')}
+                  hint={
+                    selected?.videoProvider === 'r2' ? t('videoIdUploadedHint') : t('videoIdHint')
+                  }
+                  error={
+                    state.error === 'video_unrecognised' || state.error === 'video_id_is_url'
+                      ? t('videoUnrecognised')
+                      : undefined
+                  }
+                />
+
+                {/*
+                  The other way to give a lesson a video. Outside the form on
+                  purpose: it uploads and saves on its own, so putting it inside
+                  would make a half-finished upload part of whatever else the
+                  teacher happens to be editing.
+                */}
+                <LessonVideoUpload
+                  lessonId={lesson.id}
+                  classId={classId}
+                  provider={selected?.videoProvider ?? 'none'}
+                  bytes={selected?.videoBytes ?? 0}
+                  expiresAt={selected?.videoExpiresAt ?? null}
+                />
+
+                <label className="block">
+                  <span className="mb-1.5 block text-[13px] font-medium text-ink">
+                    {t('content')}
+                  </span>
+                  <textarea
+                    name="class_content"
+                    rows={8}
+                    defaultValue={selected?.content ?? ''}
+                    className="w-full rounded-[var(--radius-input)] border border-line bg-white px-4 py-3 text-sm text-ink outline-none focus:border-brand-400"
+                  />
+                </label>
+              </div>
+            </>
+          ) : (
+            <p className="rounded-[var(--radius-input)] border border-dashed border-line bg-surface/50 p-4 text-[12px] leading-relaxed text-ink-muted">
+              {t('lessonClassNone')}
+            </p>
+          )}
+
+          {lesson.isPreview && (
+            <details className="rounded-[var(--radius-input)] border border-line bg-surface/40 p-4">
+              <summary className="cursor-pointer text-[13px] font-medium text-ink">
+                {t('previewContent')}
+              </summary>
+              <div className="mt-3 grid gap-3">
+                <Field
+                  label={t('videoId')}
+                  name="video_id"
+                  defaultValue={lesson.videoProvider === 'r2' ? '' : lesson.videoId}
+                  hint={t('videoIdHint')}
+                />
+                <label className="block">
+                  <span className="mb-1.5 block text-[13px] font-medium text-ink">
+                    {t('content')}
+                  </span>
+                  <textarea
+                    name="content"
+                    rows={5}
+                    defaultValue={lesson.content}
+                    className="w-full rounded-[var(--radius-input)] border border-line bg-white px-4 py-3 text-sm text-ink outline-none focus:border-brand-400"
+                  />
+                </label>
+              </div>
+            </details>
+          )}
 
           <label className="flex items-center gap-2.5 text-[13px] text-ink">
             <input

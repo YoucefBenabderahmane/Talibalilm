@@ -2,19 +2,21 @@ import { getTranslations, setRequestLocale } from 'next-intl/server';
 import { signDownload } from '@/lib/storage/r2';
 import { notFound, redirect } from 'next/navigation';
 import type { Metadata } from 'next';
-import { CheckCircle2, Circle, Lock, PlayCircle } from 'lucide-react';
+import { CheckCircle2, Circle, Lock, PlayCircle, Users } from 'lucide-react';
 import { Link } from '@/i18n/navigation';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { CompleteToggle } from '@/components/learn/CompleteToggle';
 import { getCourse } from '@/lib/data/courses';
 import {
+  getClassLessonContent,
   getCourseProgress,
   getLessonContent,
+  getViewerClassId,
   hasCourseAccess,
   touchEnrollment,
 } from '@/lib/data/learning';
-import { createClient } from '@/lib/supabase/server';
+import { currentViewer, isStaff } from '@/lib/auth/guards';
 import { supabaseConfigured } from '@/lib/env';
 import { courseLessons } from '@/lib/content/types';
 import { embedUrl, type VideoProvider } from '@/lib/content/video';
@@ -44,11 +46,8 @@ export default async function LessonPage({
 
   if (!supabaseConfigured) redirect('/login');
 
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect('/login');
+  const viewer = await currentViewer();
+  if (!viewer) redirect('/login');
 
   const course = await getCourse(slug);
   if (!course) notFound();
@@ -60,9 +59,26 @@ export default async function LessonPage({
   const t = await getTranslations('learn');
   const tCourses = await getTranslations('courses');
 
-  // Asked for unconditionally. RLS answers with null for a non-member, so the
-  // paywall below is driven by the database's decision, not by ours.
-  const content = await getLessonContent(lesson.id);
+  // Only for the padlock icons in the sidebar — access to THIS lesson is
+  // decided by which content came back, not by this flag.
+  const hasAccess = await hasCourseAccess(course.id);
+  const staff = isStaff(viewer);
+
+  // Content is per group now. A holder reads their own class's row and nothing
+  // else; a visitor reads the shared row of a public preview; staff read the
+  // shared row (the admin edits class content from the module screen). A
+  // holder with no group yet is asked to enter one rather than shown another
+  // group's material.
+  const myClassId = hasAccess && !staff ? await getViewerClassId(course.id, viewer.id) : null;
+  const needsClass = hasAccess && !staff && myClassId === null;
+
+  const content = staff
+    ? await getLessonContent(lesson.id)
+    : myClassId
+      ? await getClassLessonContent(lesson.id, myClassId)
+      : lesson.is_preview
+        ? await getLessonContent(lesson.id)
+        : null;
 
   // A short-lived signature for an uploaded video, minted only once the read
   // above has succeeded — that read is RLS-gated, so it IS the paywall. The
@@ -71,11 +87,8 @@ export default async function LessonPage({
     content?.videoProvider === 'r2' && content.videoId
       ? await signDownload(content.videoId, 3600)
       : null;
-  // Only for the padlock icons in the sidebar — access to THIS lesson is
-  // decided by whether `content` came back, not by this flag.
-  const hasAccess = await hasCourseAccess(course.id);
 
-  if (hasAccess) await touchEnrollment(course.id, user.id);
+  if (hasAccess) await touchEnrollment(course.id, viewer.id);
 
   const progress = await getCourseProgress(lessons.map((l) => l.id));
   const done = progress.get(lesson.id)?.status === 'completed';
@@ -190,6 +203,33 @@ export default async function LessonPage({
               <CompleteToggle lessonId={lesson.id} completed={done} />
             </div>
           </>
+        ) : needsClass ? (
+          <div className="mt-6 rounded-[var(--radius-card)] border border-line bg-surface/60 p-8 text-center">
+            <span
+              className="mx-auto flex size-11 items-center justify-center rounded-full bg-white text-ink-muted"
+              aria-hidden="true"
+            >
+              <Users className="size-5" />
+            </span>
+            <h2 className="mt-4 font-display text-lg font-semibold text-ink">
+              {t('classRequiredTitle')}
+            </h2>
+            <p className="mx-auto mt-2 max-w-sm text-[13px] leading-relaxed text-ink-muted">
+              {t('classRequiredBody')}
+            </p>
+            <Button asChild className="mt-6">
+              <Link href={`/courses/${course.slug}#classe`}>{t('classRequiredCta')}</Link>
+            </Button>
+          </div>
+        ) : hasAccess ? (
+          // The group is known and the lesson is theirs, but the office has not
+          // put this lesson's text or recording in place yet.
+          <div className="mt-6 rounded-[var(--radius-card)] border border-dashed border-line bg-surface/60 p-8 text-center">
+            <h2 className="font-display text-lg font-semibold text-ink">{t('pendingTitle')}</h2>
+            <p className="mx-auto mt-2 max-w-sm text-[13px] leading-relaxed text-ink-muted">
+              {t('pendingBody')}
+            </p>
+          </div>
         ) : (
           <div className="mt-6 rounded-[var(--radius-card)] border border-line bg-surface/60 p-8 text-center">
             <span

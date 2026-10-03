@@ -33,11 +33,14 @@ const IDLE: AdminState = { ok: false };
  */
 export function LessonVideoUpload({
   lessonId,
+  classId,
   provider,
   bytes,
   expiresAt,
 }: {
   lessonId: string;
+  /** The group this recording belongs to. A lesson's video is per class. */
+  classId: string;
   provider: string;
   bytes: number;
   /** ISO date, or null for "keep indefinitely". */
@@ -70,7 +73,12 @@ export function LessonVideoUpload({
       }
       const contentType = file.type === 'video/webm' ? 'video/webm' : 'video/mp4';
 
-      const ticket = await startLessonVideoUpload({ lessonId, contentType, size: file.size });
+      const ticket = await startLessonVideoUpload({
+        lessonId,
+        classId,
+        contentType,
+        size: file.size,
+      });
       if (!ticket.ok || !ticket.url || !ticket.key) {
         setState(ticket);
         return;
@@ -115,11 +123,11 @@ export function LessonVideoUpload({
       }
 
       setPercent(null);
-      const result = await finishLessonVideoUpload({ lessonId, key: ticket.key });
+      const result = await finishLessonVideoUpload({ lessonId, classId, key: ticket.key });
       if (result.ok) setUploaded({ bytes: file.size });
       setState(result);
     },
-    [lessonId],
+    [lessonId, classId],
   );
 
   return (
@@ -177,7 +185,7 @@ export function LessonVideoUpload({
                 className="text-red-600 hover:text-red-700"
                 onClick={async () => {
                   if (!window.confirm(t('videoRemoveConfirm'))) return;
-                  const result = await removeLessonVideo({ lessonId });
+                  const result = await removeLessonVideo({ lessonId, classId });
                   if (result.ok) setUploaded(null);
                   setState(result);
                 }}
@@ -202,6 +210,7 @@ export function LessonVideoUpload({
                     setState(
                       await setVideoRetention({
                         lessonId,
+                        classId,
                         months: v === 'forever' ? null : Number(v),
                       }),
                     );

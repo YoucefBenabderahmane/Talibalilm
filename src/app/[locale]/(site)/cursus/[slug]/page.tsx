@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button';
 import { PageHero } from '@/components/marketing/PageHero';
 import { CursusProgramme } from '@/components/marketing/CursusProgramme';
 import { getCursus, getProgramme, programmeByYear } from '@/lib/data/commerce';
+import { getCourse } from '@/lib/data/courses';
+import { courseLessons } from '@/lib/content/types';
 import { currentViewer } from '@/lib/auth/guards';
 import { createClient } from '@/lib/supabase/server';
 import { requireLocale } from '@/i18n/routing';
@@ -72,6 +74,15 @@ export default async function CursusPage({
   // page carries the checkout for both the module and this cursus. There is no
   // standalone checkout to send them to.
   const firstModule = [...years.values()].flat()[0] ?? null;
+
+  // And where a holder's shortcut goes: the first lesson of that same module —
+  // the content they paid for, opened in one click.
+  const firstCourse = firstModule ? await getCourse(firstModule.courseSlug) : null;
+  const firstLesson = firstCourse ? (courseLessons(firstCourse)[0] ?? null) : null;
+  const openHref =
+    firstCourse && firstLesson
+      ? `/dashboard/courses/${firstCourse.slug}/lessons/${firstLesson.id}`
+      : '/dashboard';
 
   const t = await getTranslations('cursus');
   const tCheckout = await getTranslations('checkout');
@@ -201,7 +212,12 @@ export default async function CursusPage({
 
           <div className="mt-10 text-center">
             {holds ? (
-              <p className="text-[13px] font-medium text-brand-700">{t('yourAccess')}</p>
+              <div className="mx-auto max-w-md rounded-[var(--radius-card)] border border-brand-200 bg-brand-50/60 p-6">
+                <p className="text-[13px] font-medium text-brand-700">{t('yourAccess')}</p>
+                <Button asChild size="lg" className="mt-4">
+                  <Link href={openHref}>{t('openCourses')}</Link>
+                </Button>
+              </div>
             ) : firstModule ? (
               <Button asChild size="lg">
                 <Link href={`/courses/${firstModule.courseSlug}#inscription`}>

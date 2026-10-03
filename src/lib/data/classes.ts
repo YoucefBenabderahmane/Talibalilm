@@ -22,6 +22,8 @@ export interface ClassWithMembers {
   name: string;
   schedule: string;
   position: number;
+  /** The lesson the group is on, when the office has set it. */
+  currentLessonId: string | null;
   members: ClassMember[];
 }
 
@@ -29,6 +31,8 @@ export interface StudentClass {
   id: string;
   name: string;
   schedule: string;
+  /** The lesson the group is on, for the "En cours" line on the class card. */
+  currentLessonTitle: string | null;
 }
 
 /**
@@ -46,7 +50,7 @@ export async function listClassesWithMembers(courseId: string): Promise<ClassWit
   const [{ data: classes, error }, { data: members }] = await Promise.all([
     supabase
       .from('classes')
-      .select('id, name, schedule, position')
+      .select('id, name, schedule, position, current_lesson_id')
       .eq('course_id', courseId)
       .order('position')
       .order('name'),
@@ -79,6 +83,7 @@ export async function listClassesWithMembers(courseId: string): Promise<ClassWit
     name: row.name,
     schedule: row.schedule,
     position: row.position,
+    currentLessonId: row.current_lesson_id,
     members: byClass.get(row.id) ?? [],
   }));
 }
@@ -98,7 +103,7 @@ export async function listClassesForStudent(
   const [{ data: classes, error }, { data: mine }] = await Promise.all([
     supabase
       .from('classes')
-      .select('id, name, schedule')
+      .select('id, name, schedule, current_lesson_id')
       .eq('course_id', courseId)
       .order('position')
       .order('name'),
@@ -114,7 +119,28 @@ export async function listClassesForStudent(
     return { classes: [], myClassId: null };
   }
 
-  return { classes: classes ?? [], myClassId: mine?.class_id ?? null };
+  // The titles for the "En cours" line, in one read rather than an embed.
+  const lessonIds = [...new Set((classes ?? []).map((row) => row.current_lesson_id).filter(Boolean))];
+  const titles = new Map<string, string>();
+  if (lessonIds.length > 0) {
+    const { data: lessons } = await supabase
+      .from('lessons')
+      .select('id, title')
+      .in('id', lessonIds as string[]);
+    for (const lesson of lessons ?? []) titles.set(lesson.id, lesson.title);
+  }
+
+  return {
+    classes: (classes ?? []).map((row) => ({
+      id: row.id,
+      name: row.name,
+      schedule: row.schedule,
+      currentLessonTitle: row.current_lesson_id
+        ? (titles.get(row.current_lesson_id) ?? null)
+        : null,
+    })),
+    myClassId: mine?.class_id ?? null,
+  };
 }
 
 /** Every class, for the live-session form's picker. Staff read. */

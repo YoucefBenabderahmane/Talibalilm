@@ -1152,6 +1152,8 @@ export interface Database {
           name: string;
           schedule: string;
           position: number;
+          /** The lesson this group is currently on, when the office has set it. */
+          current_lesson_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -1161,11 +1163,13 @@ export interface Database {
           name: string;
           schedule?: string;
           position?: number;
+          current_lesson_id?: string | null;
         };
         Update: {
           name?: string;
           schedule?: string;
           position?: number;
+          current_lesson_id?: string | null;
         };
         Relationships: [
           {
@@ -1173,6 +1177,69 @@ export interface Database {
             columns: ['course_id'];
             isOneToOne: false;
             referencedRelation: 'courses';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'classes_current_lesson_id_fkey';
+            columns: ['current_lesson_id'];
+            isOneToOne: false;
+            referencedRelation: 'lessons';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      class_lesson_content: {
+        Row: {
+          id: string;
+          class_id: string;
+          lesson_id: string;
+          content: string;
+          video_provider: VideoProvider;
+          video_id: string | null;
+          video_bytes: number;
+          video_uploaded_at: string | null;
+          video_expires_at: string | null;
+          attachments: Json;
+          uploaded_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          class_id: string;
+          lesson_id: string;
+          content?: string;
+          video_provider?: VideoProvider;
+          video_id?: string | null;
+          video_bytes?: number;
+          video_uploaded_at?: string | null;
+          video_expires_at?: string | null;
+          attachments?: Json;
+          uploaded_by?: string | null;
+        };
+        Update: {
+          content?: string;
+          video_provider?: VideoProvider;
+          video_id?: string | null;
+          video_bytes?: number;
+          video_uploaded_at?: string | null;
+          video_expires_at?: string | null;
+          attachments?: Json;
+          uploaded_by?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'class_lesson_content_class_id_fkey';
+            columns: ['class_id'];
+            isOneToOne: false;
+            referencedRelation: 'classes';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'class_lesson_content_lesson_id_fkey';
+            columns: ['lesson_id'];
+            isOneToOne: false;
+            referencedRelation: 'lessons';
             referencedColumns: ['id'];
           },
         ];

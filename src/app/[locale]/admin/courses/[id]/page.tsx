@@ -6,7 +6,7 @@ import { CourseSettingsForm } from '@/components/admin/CourseSettingsForm';
 import { CoverUpload } from '@/components/admin/CoverUpload';
 import { GalleryUpload } from '@/components/admin/GalleryUpload';
 import { readBullets, readGallery, readHighlights } from '@/lib/content/presentation';
-import { CourseOutline } from '@/components/admin/CourseOutline';
+import { CourseOutline, type OutlineClassContent } from '@/components/admin/CourseOutline';
 import { PublishControls } from '@/components/admin/PublishControls';
 import { CourseSteps } from '@/components/admin/CourseSteps';
 import { CourseFees, type CourseFee } from '@/components/admin/CourseFees';
@@ -128,6 +128,29 @@ export default async function CourseBuilderPage({
   // The groups this module's live sessions are taught to, with their rosters.
   const classes = await listClassesWithMembers(course.id);
 
+  // Each group's content for each lesson — the text and video the lesson form
+  // edits, once a group is chosen. Staff read every row.
+  const { data: classContentRows } = lessonIds.length
+    ? await supabase
+        .from('class_lesson_content')
+        .select('class_id, lesson_id, content, video_id, video_provider, video_bytes, video_expires_at')
+        .in('lesson_id', lessonIds)
+    : { data: [] };
+
+  const classContentByLesson = new Map<string, OutlineClassContent[]>();
+  for (const row of classContentRows ?? []) {
+    const list = classContentByLesson.get(row.lesson_id) ?? [];
+    list.push({
+      classId: row.class_id,
+      content: row.content,
+      videoId: row.video_id ?? '',
+      videoProvider: row.video_provider,
+      videoBytes: row.video_bytes,
+      videoExpiresAt: row.video_expires_at,
+    });
+    classContentByLesson.set(row.lesson_id, list);
+  }
+
   const modules = (course.modules ?? [])
     .slice()
     .sort((a, b) => a.position - b.position)
@@ -150,6 +173,7 @@ export default async function CourseBuilderPage({
           videoProvider: contentByLesson[l.id]?.videoProvider ?? 'none',
           videoBytes: contentByLesson[l.id]?.videoBytes ?? 0,
           videoExpiresAt: contentByLesson[l.id]?.videoExpiresAt ?? null,
+          classContent: classContentByLesson.get(l.id) ?? [],
         })),
     }));
 
@@ -199,7 +223,11 @@ export default async function CourseBuilderPage({
               label: t('tabContent'),
               content: (
                 <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_340px]">
-                  <CourseOutline courseId={course.id} modules={modules} />
+                  <CourseOutline
+                    courseId={course.id}
+                    modules={modules}
+                    classes={classes.map((klass) => ({ id: klass.id, name: klass.name }))}
+                  />
                   <aside className="space-y-6 lg:sticky lg:top-24 lg:self-start">
                     <CoverUpload courseId={course.id} coverUrl={course.cover_url} />
                     <GalleryUpload courseId={course.id} images={readGallery(course.gallery)} />
@@ -222,7 +250,15 @@ export default async function CourseBuilderPage({
             {
               key: 'classes',
               label: t('tabClasses'),
-              content: <ClassManager courseId={course.id} classes={classes} />,
+              content: (
+                <ClassManager
+                  courseId={course.id}
+                  classes={classes}
+                  lessons={modules.flatMap((m) =>
+                    m.lessons.map((lesson) => ({ id: lesson.id, title: lesson.title })),
+                  )}
+                />
+              ),
             },
           ]}
         />

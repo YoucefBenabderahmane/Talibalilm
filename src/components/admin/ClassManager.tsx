@@ -9,6 +9,7 @@ import {
   createClass,
   deleteClass,
   removeClassMember,
+  setClassCurrentLesson,
   updateClass,
 } from '@/app/actions/classes';
 import type { AdminState } from '@/app/actions/admin';
@@ -31,9 +32,12 @@ const FIELD =
 export function ClassManager({
   courseId,
   classes,
+  lessons,
 }: {
   courseId: string;
   classes: ClassWithMembers[];
+  /** The module's lessons, in order — the choices for "where is this group?". */
+  lessons: { id: string; title: string }[];
 }) {
   const t = useTranslations('admin');
   const [state, action] = useActionState(createClass, IDLE);
@@ -72,7 +76,7 @@ export function ClassManager({
       ) : (
         <ul className="space-y-4">
           {classes.map((klass) => (
-            <ClassRow key={klass.id} klass={klass} />
+            <ClassRow key={klass.id} klass={klass} lessons={lessons} />
           ))}
         </ul>
       )}
@@ -80,11 +84,18 @@ export function ClassManager({
   );
 }
 
-function ClassRow({ klass }: { klass: ClassWithMembers }) {
+function ClassRow({
+  klass,
+  lessons,
+}: {
+  klass: ClassWithMembers;
+  lessons: { id: string; title: string }[];
+}) {
   const t = useTranslations('admin');
   const [updateState, updateAction] = useActionState(updateClass, IDLE);
   const [deleteState, deleteAction] = useActionState(deleteClass, IDLE);
   const [memberState, memberAction] = useActionState(removeClassMember, IDLE);
+  const [lessonState, lessonAction] = useActionState(setClassCurrentLesson, IDLE);
 
   return (
     <li className="rounded-[var(--radius-card)] border border-line bg-white p-5">
@@ -110,6 +121,34 @@ function ClassRow({ klass }: { klass: ClassWithMembers }) {
         <div className="flex flex-wrap items-center gap-3">
           <SaveButton state={updateState} label={t('classSave')} size="sm" />
           <ActionError state={updateState} />
+        </div>
+      </ActionForm>
+
+      {/* Where the group is. Shown to students on the class card, so the
+          groups can see their own position without mixing with another's. */}
+      <ActionForm action={lessonAction} className="mt-5 border-t border-line pt-4">
+        <input type="hidden" name="id" value={klass.id} />
+        <label className="block">
+          <span className="mb-1.5 block text-[13px] font-medium text-ink">
+            {t('classCurrentLesson')}
+          </span>
+          <select
+            name="lessonId"
+            defaultValue={klass.currentLessonId ?? ''}
+            className={FIELD}
+            disabled={lessons.length === 0}
+          >
+            <option value="">{t('classCurrentLessonNone')}</option>
+            {lessons.map((lesson) => (
+              <option key={lesson.id} value={lesson.id}>
+                {lesson.title}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <SaveButton state={lessonState} label={t('classSave')} size="sm" />
+          <ActionError state={lessonState} />
         </div>
       </ActionForm>
 

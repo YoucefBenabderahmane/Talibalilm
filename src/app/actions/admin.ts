@@ -452,8 +452,13 @@ export async function updateLesson(_prev: AdminState, formData: FormData): Promi
       type: z.enum(['video', 'text', 'live', 'quiz', 'assignment']).default('video'),
       minutes: z.coerce.number().int().min(0).max(1440).default(0),
       is_preview: z.coerce.boolean().default(false),
-      content: z.string().max(50000).default(''),
-      video_id: z.string().max(200).default(''),
+      /** The group whose content is edited. Null when the module has no classes. */
+      classId: z.string().uuid().nullable().catch(null),
+      class_content: z.string().max(50000).default(''),
+      class_video_id: z.string().max(200).default(''),
+      /** The shared preview fields, present only when the lesson is a trial. */
+      content: z.string().max(50000).optional(),
+      video_id: z.string().max(200).optional(),
     })
     .safeParse({
       ...Object.fromEntries(formData),
@@ -474,54 +479,95 @@ export async function updateLesson(_prev: AdminState, formData: FormData): Promi
 
   if (lessonError) return { ok: false, error: 'refused', detail: errorDetail(lessonError) };
 
-  // The office pastes a YouTube or Drive link; the column stores only the id.
-  // Deciding the provider here — rather than assuming Bunny, which is what this
-  // did before and which left every lesson pointing at a service the school does
-  // not use — is what makes the player actually appear.
+  // ---- The group's content -------------------------------------------------
   //
   // The row is read first because the link box is EMPTY for an uploaded video:
   // resolving the empty box on its own answered `none` and wrote it over the
   // upload on every save. `resolveVideoUpdate` owns that rule.
-  const { data: currentContent } = await supabase
-    .from('lesson_content')
-    .select('video_provider, video_id')
-    .eq('lesson_id', parsed.data.id)
-    .maybeSingle();
+  if (parsed.data.classId) {
+    const { data: current } = await supabase
+      .from('class_lesson_content')
+      .select('video_provider, video_id')
+      .eq('lesson_id', parsed.data.id)
+      .eq('class_id', parsed.data.classId)
+      .maybeSingle();
 
-  const video = resolveVideoUpdate(
-    {
-      provider: (currentContent?.video_provider as VideoProvider | undefined) ?? 'none',
-      id: currentContent?.video_id ?? null,
-    },
-    parsed.data.video_id,
-  );
-  if (!video) return { ok: false, error: 'video_unrecognised' };
+    const video = resolveVideoUpdate(
+      {
+        provider: (current?.video_provider as VideoProvider | undefined) ?? 'none',
+        id: current?.video_id ?? null,
+      },
+      parsed.data.class_video_id,
+    );
+    if (!video) return { ok: false, error: 'video_unrecognised' };
 
-  // A link replacing an upload orphans the object unless it is removed here.
-  // The other direction — an upload replacing a link or another file — is
-  // handled by the uploader, which deletes the old key as the row moves.
-  if (
-    currentContent?.video_provider === 'r2' &&
-    currentContent.video_id &&
-    video.provider !== 'r2'
-  ) {
-    await deleteObject(currentContent.video_id);
+    // A link replacing an upload orphans the object unless it is removed here.
+    if (current?.video_provider === 'r2' && current.video_id && video.provider !== 'r2') {
+      await deleteObject(current.video_id);
+    }
+
+    const { error: classError } = await supabase.from('class_lesson_content').upsert(
+      {
+        lesson_id: parsed.data.id,
+        class_id: parsed.data.classId,
+        content: parsed.data.class_content,
+        video_id: video.id,
+        video_provider: video.provider,
+      },
+      { onConflict: 'class_id,lesson_id' },
+    );
+    // The check constraint rejects a URL in video_id; report that specifically
+    // rather than as a generic failure, because it is a mistake an author makes.
+    if (classError) {
+      return {
+        ok: false,
+        error: classError.code === '23514' ? 'video_id_is_url' : 'refused',
+        detail: errorDetail(classError),
+      };
+    }
   }
 
-  const { error: contentError } = await supabase.from('lesson_content').upsert(
-    {
-      lesson_id: parsed.data.id,
-      content: parsed.data.content,
-      video_id: video.id,
-      video_provider: video.provider,
-    },
-    { onConflict: 'lesson_id' },
-  );
+  // ---- The shared row, for a public preview ---------------------------------
+  //
+  // Absent fields mean "not edited": a regular lesson's form does not carry
+  // them, and upserting with defaults would blank a trial's content.
+  if (parsed.data.content !== undefined || parsed.data.video_id !== undefined) {
+    const { data: currentContent } = await supabase
+      .from('lesson_content')
+      .select('video_provider, video_id')
+      .eq('lesson_id', parsed.data.id)
+      .maybeSingle();
 
-  // The check constraint rejects a URL in video_id; report that specifically
-  // rather than as a generic failure, because it is a mistake an author makes.
-  if (contentError) {
-    return { ok: false, error: contentError.code === '23514' ? 'video_id_is_url' : 'refused' };
+    const video = resolveVideoUpdate(
+      {
+        provider: (currentContent?.video_provider as VideoProvider | undefined) ?? 'none',
+        id: currentContent?.video_id ?? null,
+      },
+      parsed.data.video_id ?? '',
+    );
+    if (!video) return { ok: false, error: 'video_unrecognised' };
+
+    if (
+      currentContent?.video_provider === 'r2' &&
+      currentContent.video_id &&
+      video.provider !== 'r2'
+    ) {
+      await deleteObject(currentContent.video_id);
+    }
+
+    const { error: contentError } = await supabase.from('lesson_content').upsert(
+      {
+        lesson_id: parsed.data.id,
+        content: parsed.data.content ?? '',
+        video_id: video.id,
+        video_provider: video.provider,
+      },
+      { onConflict: 'lesson_id' },
+    );
+
+    if (contentError) {
+      return { ok: false, error: contentError.code === '23514' ? 'video_id_is_url' : 'refused' };
+    }
   }
 
   revalidatePath('/admin/courses', 'layout');

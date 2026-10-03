@@ -39,6 +39,51 @@ export async function getLessonContent(lessonId: string): Promise<LessonContent 
 }
 
 /**
+ * The content of one lesson as taught to one group.
+ *
+ * Null means either "this class has not been given this lesson yet" or "the
+ * caller may not read it" — the policy answers both, so the page never has to
+ * guess which. It never falls back to the shared row: mixing the groups is the
+ * thing this table exists to prevent.
+ */
+export async function getClassLessonContent(
+  lessonId: string,
+  classId: string,
+): Promise<LessonContent | null> {
+  if (!supabaseConfigured) return null;
+
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from('class_lesson_content')
+    .select('content, video_provider, video_id')
+    .eq('lesson_id', lessonId)
+    .eq('class_id', classId)
+    .maybeSingle();
+
+  if (!data) return null;
+  return {
+    content: data.content,
+    videoProvider: data.video_provider,
+    videoId: data.video_id,
+  };
+}
+
+/** The group this student is in for one course, or null. RLS returns only theirs. */
+export async function getViewerClassId(courseId: string, userId: string): Promise<string | null> {
+  if (!supabaseConfigured) return null;
+
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from('class_members')
+    .select('class_id')
+    .eq('course_id', courseId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  return data?.class_id ?? null;
+}
+
+/**
  * Everything the reader currently holds, soonest expiry first.
  *
  * RLS returns only their own rows, so there is no `user_id` filter here —

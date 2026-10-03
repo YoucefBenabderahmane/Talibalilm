@@ -282,6 +282,27 @@ export default async function CoursePage({
               <Badge variant="soft">{t('card.duration', { count: course.duration_weeks })}</Badge>
             )}
           </div>
+
+          {/* The way in for a student who already holds the module. A holder
+              with no group yet is sent to the class picker instead: the
+              lessons' texts and recordings are their group's, so choosing one
+              is what opens the content. */}
+          {owned && (
+            <div className="mt-8 flex flex-wrap items-center justify-center gap-2">
+              {!isStaff(viewer!) &&
+              myClasses &&
+              myClasses.classes.length > 0 &&
+              myClasses.myClassId === null ? (
+                <Button asChild size="lg" variant="gold">
+                  <Link href={`/courses/${course.slug}#classe`}>{t('detail.chooseClass')}</Link>
+                </Button>
+              ) : (
+                <Button asChild size="lg" variant="gold">
+                  <Link href={enterHref}>{t('detail.openModule')}</Link>
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       </section>
 
@@ -537,7 +558,7 @@ export default async function CoursePage({
           and a session is taught to one group — so this choice is what opens
           the classroom. The office builds the groups; the student picks. */}
       {owned && myClasses && myClasses.classes.length > 0 && (
-        <section className="py-14 sm:py-16">
+        <section id="classe" className="scroll-mt-24 py-14 sm:py-16">
           <div className="shell max-w-3xl">
             <h2 className="text-center font-display text-[clamp(1.5rem,3.4vw,2rem)] font-semibold text-gold-600">
               {t('detail.myClassTitle')}
