@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { LiveSessionForm } from '@/components/admin/LiveSessionForm';
 import { LiveSessionControls } from '@/components/admin/LiveSessionControls';
 import { listLiveSessions } from '@/lib/data/live';
+import { listClasses } from '@/lib/data/classes';
 import { requireStaff } from '@/lib/auth/guards';
 import { createClient } from '@/lib/supabase/server';
 import type { LiveStatus } from '@/lib/supabase/database.types';
@@ -27,9 +28,10 @@ export default async function AdminLivePage({ params }: { params: Promise<{ loca
   const t = await getTranslations('admin');
 
   const supabase = await createClient();
-  const [sessions, { data: courses }] = await Promise.all([
+  const [sessions, { data: courses }, classes] = await Promise.all([
     listLiveSessions(),
     supabase.from('courses').select('id, title').order('display_order'),
+    listClasses(),
   ]);
 
   const when = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' });
@@ -56,7 +58,7 @@ export default async function AdminLivePage({ params }: { params: Promise<{ loca
       <section className="mt-8">
         <h2 className="font-display text-[15px] font-semibold text-ink">{t('liveNew')}</h2>
         <div className="mt-3">
-          <LiveSessionForm courses={courses ?? []} />
+          <LiveSessionForm courses={courses ?? []} classes={classes} />
         </div>
       </section>
 
@@ -73,6 +75,7 @@ export default async function AdminLivePage({ params }: { params: Promise<{ loca
               <thead>
                 <tr className="bg-surface/60 text-left text-[11px] tracking-wide text-ink-muted uppercase">
                   <th className="p-3 font-medium">{t('liveCourse')}</th>
+                  <th className="p-3 font-medium">{t('liveClassGroup')}</th>
                   <th className="p-3 font-medium">{t('liveClassTitle')}</th>
                   <th className="p-3 font-medium">{t('colStarted')}</th>
                   <th className="p-3 font-medium">{t('colEnded')}</th>
@@ -96,6 +99,7 @@ export default async function AdminLivePage({ params }: { params: Promise<{ loca
                   return (
                     <tr key={s.id} className="transition-colors hover:bg-brand-50/40">
                       <td className="p-3 text-ink-muted">{s.courseTitle}</td>
+                      <td className="p-3 text-ink-muted">{s.classTitle}</td>
                       <td className="p-3">
                         <Link
                           href={`/admin/live/${s.id}`}

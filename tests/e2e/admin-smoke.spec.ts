@@ -85,6 +85,14 @@ test.describe('the admin course builder', () => {
     // render never shows it.
     await expect(page.getByRole('heading', { level: 1, name: course.title })).toBeVisible();
     await expect(page.getByText('Cet écran d’administration n’a pas pu s’afficher')).toHaveCount(0);
+
+    // The module's groups live on their own step: the office creates them
+    // here, the students join one from the module's public page.
+    await page
+      .getByRole('navigation', { name: 'Étapes du module' })
+      .getByRole('button', { name: /Classes/ })
+      .click();
+    await expect(page.getByRole('button', { name: 'Créer la classe' })).toBeVisible();
   });
 
   test('the cursus screen renders, with its year pickers', async ({ page }) => {

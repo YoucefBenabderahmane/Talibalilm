@@ -9,8 +9,10 @@ import { CourseCard } from '@/components/marketing/CourseCard';
 import { CursusProgramme } from '@/components/marketing/CursusProgramme';
 import { PlanningTarifs } from '@/components/marketing/PlanningTarifs';
 import { InfoCarousel } from '@/components/courses/InfoCarousel';
+import { ClassPicker } from '@/components/courses/ClassPicker';
 import { CheckoutFlow } from '@/components/checkout/CheckoutFlow';
 import { getCourse, getInstructor, relatedCourses } from '@/lib/data/courses';
+import { listClassesForStudent } from '@/lib/data/classes';
 import { createClient } from '@/lib/supabase/server';
 import { currentViewer, isStaff } from '@/lib/auth/guards';
 import { listCursus, listProducts } from '@/lib/data/commerce';
@@ -104,6 +106,12 @@ export default async function CoursePage({
     ? isStaff(viewer) ||
       (await supabase.rpc('has_course_access', { cid: course.id })).data === true
     : false;
+
+  // The groups this student can choose from, and the one they are in. Fetched
+  // only for a holder: a visitor has no class to belong to, and the policy
+  // would return an empty list anyway.
+  const myClasses =
+    owned && viewer ? await listClassesForStudent(course.id, viewer.id) : null;
 
   const t = await getTranslations('courses');
   const tCommon = await getTranslations('common');
@@ -517,11 +525,31 @@ export default async function CoursePage({
           on-site / online toggle. */}
       {entries.length > 0 && <PlanningTarifs entries={entries} locale={locale} />}
 
+      {/* The student's group. A module runs several times, at different hours,
+          and a session is taught to one group — so this choice is what opens
+          the classroom. The office builds the groups; the student picks. */}
+      {owned && myClasses && myClasses.classes.length > 0 && (
+        <section className="py-14 sm:py-16">
+          <div className="shell max-w-3xl">
+            <h2 className="text-center font-display text-[clamp(1.5rem,3.4vw,2rem)] font-semibold text-gold-600">
+              {t('detail.myClassTitle')}
+            </h2>
+            <p className="mx-auto mt-3 max-w-xl text-center text-[13px] leading-relaxed text-ink-muted">
+              {t('detail.myClassLead')}
+            </p>
+            <div className="mt-6">
+              <ClassPicker classes={myClasses.classes} myClassId={myClasses.myClassId} />
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* The live sessions scheduled against this module.
           `live_sessions` is readable only by staff and by a student who holds
-          the module, so this section simply is not here for a visitor who has
-          not enrolled — the list is empty because the database answered empty,
-          not because the page decided to hide it. */}
+          the module and sits in the session's class, so this section simply is
+          not here for a visitor who has not enrolled — the list is empty
+          because the database answered empty, not because the page decided to
+          hide it. */}
       {upcoming.length > 0 && (
         <section className="bg-surface/60 py-14 sm:py-16">
           <div className="shell max-w-3xl">

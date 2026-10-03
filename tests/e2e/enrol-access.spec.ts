@@ -70,6 +70,14 @@ test.describe('the module page and who holds it', () => {
       },
     });
     expect(granted.ok(), await granted.text()).toBeTruthy();
+
+    // A group to choose from: the module page offers the classes the office
+    // built, and the student joins one themselves.
+    const klass = await request.post(`${SUPABASE_URL}/rest/v1/classes`, {
+      headers: { ...serviceHeaders, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+      data: { course_id: course.id, name: 'Classe E2E', schedule: 'Samedi 9h – 12h' },
+    });
+    expect(klass.ok(), await klass.text()).toBeTruthy();
   });
 
   test.afterAll(async ({ request }) => {
@@ -106,6 +114,12 @@ test.describe('the module page and who holds it', () => {
       'href',
       new RegExp(`/dashboard/courses/${slug}/lessons/`),
     );
+
+    // The group is the student's to choose, and the choice sticks.
+    await expect(page.getByRole('heading', { name: 'Votre classe' })).toBeVisible();
+    const group = page.getByRole('button', { name: /Classe E2E/ });
+    await group.click();
+    await expect(group).toHaveAttribute('aria-pressed', 'true');
   });
 });
 

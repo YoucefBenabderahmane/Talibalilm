@@ -19,6 +19,8 @@ export interface LiveSessionView {
   id: string;
   courseId: string;
   courseTitle: string;
+  classId: string;
+  classTitle: string;
   title: string;
   description: string;
   roomToken: string;
@@ -33,6 +35,7 @@ export interface LiveSessionView {
 interface Row {
   id: string;
   course_id: string;
+  class_id: string;
   title: string;
   description: string;
   room_token: string;
@@ -46,13 +49,16 @@ interface Row {
 }
 
 const SELECT =
-  'id, course_id, title, description, room_token, status, scheduled_at, started_at, ended_at, max_participants, recording_note, courses ( title )';
+  'id, course_id, class_id, title, description, room_token, status, scheduled_at, started_at, ended_at, max_participants, recording_note, courses ( title )';
 
 function toView(row: Row): LiveSessionView {
   return {
     id: row.id,
     courseId: row.course_id,
     courseTitle: row.courses?.title ?? '',
+    classId: row.class_id,
+    // Filled by `attachClassNames`, one query for the whole page.
+    classTitle: '',
     title: row.title,
     description: row.description,
     roomToken: row.room_token,
@@ -63,6 +69,28 @@ function toView(row: Row): LiveSessionView {
     maxParticipants: row.max_participants,
     recordingNote: row.recording_note,
   };
+}
+
+/**
+ * The class each session is taught to.
+ *
+ * Read separately rather than embedded: the session-to-class foreign key is
+ * composite (`course_id, class_id`), and a read that silently returns nothing
+ * when the embed does not resolve is exactly the failure this codebase keeps
+ * meeting. One query for the page's class names is cheap and cannot lie.
+ */
+async function attachClassNames(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  rows: Row[],
+): Promise<LiveSessionView[]> {
+  const views = rows.map(toView);
+  const ids = [...new Set(rows.map((row) => row.class_id))];
+  if (ids.length === 0) return views;
+
+  const { data } = await supabase.from('classes').select('id, name').in('id', ids);
+  const names = new Map((data ?? []).map((row) => [row.id, row.name]));
+  for (const view of views) view.classTitle = names.get(view.classId) ?? '';
+  return views;
 }
 
 /** Every class the caller is allowed to see, soonest first. */
@@ -82,7 +110,7 @@ export async function listLiveSessions(courseId?: string): Promise<LiveSessionVi
     reportError('live.list', error);
     return [];
   }
-  return (data as unknown as Row[]).map(toView);
+  return attachClassNames(supabase, data as unknown as Row[]);
 }
 
 export async function getLiveSession(id: string): Promise<LiveSessionView | undefined> {
@@ -98,7 +126,8 @@ export async function getLiveSession(id: string): Promise<LiveSessionView | unde
     reportError('live.get', error, { id });
     return undefined;
   }
-  return data ? toView(data as unknown as Row) : undefined;
+  if (!data) return undefined;
+  return (await attachClassNames(supabase, [data as unknown as Row]))[0];
 }
 
 /**
@@ -121,7 +150,8 @@ export async function getLiveSessionByToken(token: string): Promise<LiveSessionV
     reportError('live.byToken', error);
     return undefined;
   }
-  return data ? toView(data as unknown as Row) : undefined;
+  if (!data) return undefined;
+  return (await attachClassNames(supabase, [data as unknown as Row]))[0];
 }
 
 export interface JoinRequestView {
@@ -361,7 +391,7 @@ export async function upcomingLiveSessions(limit = 5): Promise<LiveSessionView[]
     reportError('live.upcoming', error);
     return [];
   }
-  return (data as unknown as Row[]).map(toView);
+  return attachClassNames(supabase, data as unknown as Row[]);
 }
 
 /** The whiteboard as it stands, for somebody arriving mid-lesson. */

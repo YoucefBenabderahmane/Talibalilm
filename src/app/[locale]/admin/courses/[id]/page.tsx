@@ -10,6 +10,8 @@ import { CourseOutline } from '@/components/admin/CourseOutline';
 import { PublishControls } from '@/components/admin/PublishControls';
 import { CourseSteps } from '@/components/admin/CourseSteps';
 import { CourseFees, type CourseFee } from '@/components/admin/CourseFees';
+import { ClassManager } from '@/components/admin/ClassManager';
+import { listClassesWithMembers } from '@/lib/data/classes';
 import { createClient } from '@/lib/supabase/server';
 import { reportError } from '@/lib/observability/report';
 import { requireLocale } from '@/i18n/routing';
@@ -123,6 +125,9 @@ export default async function CourseBuilderPage({
     hoursPerWeek: f.hours_per_week,
   }));
 
+  // The groups this module's live sessions are taught to, with their rosters.
+  const classes = await listClassesWithMembers(course.id);
+
   const modules = (course.modules ?? [])
     .slice()
     .sort((a, b) => a.position - b.position)
@@ -213,6 +218,11 @@ export default async function CourseBuilderPage({
                   <CourseFees courseId={course.id} fees={fees} />
                 </div>
               ),
+            },
+            {
+              key: 'classes',
+              label: t('tabClasses'),
+              content: <ClassManager courseId={course.id} classes={classes} />,
             },
           ]}
         />
