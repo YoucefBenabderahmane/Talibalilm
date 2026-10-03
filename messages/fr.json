@@ -44,13 +44,6 @@
       "body": "L’éducation religieuse constitue un pilier essentiel pour la construction d’une communauté consciente, équilibrée et attachée à ses valeurs spirituelles.",
       "cta": "DÉCOUVRIR NOS FORMATIONS"
     },
-    "featured": {
-      "eyebrow": "Notre catalogue",
-      "title": "Cours populaires",
-      "body": "L’Institut Talib Alim est un centre dédié à l’enseignement des sciences islamiques, proposant des formations en présentiel et à distance.",
-      "body2": "Nous accompagnons nos apprenants dans l’apprentissage des sciences de la croyance, du fiqh, du Coran et de l’histoire de l’islam, à travers une pédagogie accessible, progressive et respectueuse des valeurs islamiques.",
-      "cta": "Voir tous les cours"
-    },
     "how": {
       "eyebrow": "Comment ça marche",
       "title": "Trois étapes, puis vous étudiez",
@@ -91,8 +84,9 @@
     "heroTitleAr": "معهد طالب العلم",
     "brief": {
       "title": "L’institut en bref",
-      "body": "L’Institut Talib Alim enseigne les sciences islamiques et la langue arabe à Montereau-Fault-Yonne et en visioconférence. Les cours sont ouverts aux débutants comme aux étudiants confirmés, avec un programme progressif et des enseignants qui suivent chacun individuellement.",
-      "body2": "Chaque module peut être suivi seul ou à l’intérieur d’un cursus complet. Vous choisissez le rythme, le mode et la formule ; l’accès s’ouvre dès le paiement."
+      "body": "L’Institut Talib Alim propose des cours de sciences islamiques et de langue arabe à Montereau-Fault-Yonne et en ligne. Ouverts aux débutants comme aux étudiants confirmés, les cours suivent un programme progressif, avec un accompagnement individuel.",
+      "body2": "Chaque module peut être suivi séparément ou dans le cadre d’un cursus complet. Vous choisissez la formule et le mode d’apprentissage qui vous conviennent. L’accès à la plateforme est activé après validation de votre inscription et de votre paiement.",
+      "cta": "Découvrir tous les modules"
     },
     "formations": {
       "title": "Découvrez nos formations",
