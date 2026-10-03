@@ -998,6 +998,7 @@ export interface Database {
         Row: {
           id: string;
           course_id: string;
+          class_id: string;
           title: string;
           description: string;
           host_id: string | null;
@@ -1018,6 +1019,7 @@ export interface Database {
         Insert: {
           id?: string;
           course_id: string;
+          class_id: string;
           title: string;
           description?: string;
           host_id?: string | null;
@@ -1027,6 +1029,7 @@ export interface Database {
           recording_note?: string;
         };
         Update: {
+          class_id?: string;
           title?: string;
           description?: string;
           host_id?: string | null;
@@ -1048,6 +1051,13 @@ export interface Database {
             isOneToOne: false;
             referencedRelation: 'courses';
             referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'live_sessions_class_fk';
+            columns: ['course_id', 'class_id'];
+            isOneToOne: false;
+            referencedRelation: 'classes';
+            referencedColumns: ['course_id', 'id'];
           },
         ];
       };
@@ -1128,6 +1138,68 @@ export interface Database {
             columns: ['session_id'];
             isOneToOne: false;
             referencedRelation: 'live_sessions';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      classes: {
+        Row: {
+          id: string;
+          course_id: string;
+          name: string;
+          schedule: string;
+          position: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          course_id: string;
+          name: string;
+          schedule?: string;
+          position?: number;
+        };
+        Update: {
+          name?: string;
+          schedule?: string;
+          position?: number;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'classes_course_id_fkey';
+            columns: ['course_id'];
+            isOneToOne: false;
+            referencedRelation: 'courses';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      class_members: {
+        Row: {
+          class_id: string;
+          course_id: string;
+          user_id: string;
+          joined_at: string;
+        };
+        Insert: {
+          class_id: string;
+          course_id: string;
+          user_id: string;
+        };
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: 'class_members_course_id_class_id_fkey';
+            columns: ['course_id', 'class_id'];
+            isOneToOne: false;
+            referencedRelation: 'classes';
+            referencedColumns: ['course_id', 'id'];
+          },
+          {
+            foreignKeyName: 'class_members_user_id_fkey';
+            columns: ['user_id'];
+            isOneToOne: false;
+            referencedRelation: 'users';
             referencedColumns: ['id'];
           },
         ];

@@ -30,6 +30,10 @@ async function staffClient() {
 
 const createSchema = z.object({
   courseId: z.string().uuid(),
+  // A session is taught to one class of one module. The composite foreign key
+  // refuses a class that belongs to another course, so a form bug cannot file
+  // a Fiqh class under Hadith.
+  classId: z.string().uuid(),
   title: z.string().trim().min(1).max(200),
   description: z.string().trim().max(2000).default(''),
   // `datetime-local` gives no zone; the browser's own offset is attached below.
@@ -43,6 +47,7 @@ export async function createLiveSession(
 ): Promise<AdminState> {
   const parsed = createSchema.safeParse({
     courseId: formData.get('courseId'),
+    classId: formData.get('classId'),
     title: formData.get('title'),
     description: formData.get('description') ?? '',
     scheduledAt: (formData.get('scheduledAt') as string) || undefined,
@@ -56,6 +61,7 @@ export async function createLiveSession(
   const supabase = await staffClient();
   const { error } = await supabase.from('live_sessions').insert({
     course_id: parsed.data.courseId,
+    class_id: parsed.data.classId,
     title: parsed.data.title,
     description: parsed.data.description,
     scheduled_at: when ? when.toISOString() : null,

@@ -31,9 +31,19 @@ insert into public.entitlements (user_id, scope, course_id, delivery, expires_at
 values ('a0000000-0000-4000-8000-000000000001', 'course',
         'c0000000-0000-4000-8000-000000000001', 'online', now() + interval '365 days');
 
-insert into public.live_sessions (id, course_id, title, status, scheduled_at)
+-- A session is taught to a class, and the buyer sits in Class A. Class B is
+-- the same module at another hour — the cross-class target for the assertions.
+insert into public.classes (id, course_id, name) values
+  ('aa110000-0000-4000-8000-000000000001', 'c0000000-0000-4000-8000-000000000001', 'Classe A'),
+  ('aa110000-0000-4000-8000-000000000002', 'c0000000-0000-4000-8000-000000000001', 'Classe B');
+
+insert into public.class_members (class_id, course_id, user_id)
+values ('aa110000-0000-4000-8000-000000000001', 'c0000000-0000-4000-8000-000000000001',
+        'a0000000-0000-4000-8000-000000000001');
+
+insert into public.live_sessions (id, course_id, class_id, title, status, scheduled_at)
 values ('11110000-0000-4000-8000-000000000001', 'c0000000-0000-4000-8000-000000000001',
-        'Cours en direct — Fiqh', 'live', now());
+        'aa110000-0000-4000-8000-000000000001', 'Cours en direct — Fiqh', 'live', now());
 
 \echo ''
 \echo '=== live classroom access ==='
@@ -49,8 +59,9 @@ begin
   -- above are inserted as superuser, which is exactly why that went unnoticed —
   -- so this asserts through a real staff session.
   call auth.login_as('a0000000-0000-4000-8000-000000000003');
-  insert into public.live_sessions (course_id, title)
-  values ('c0000000-0000-4000-8000-000000000001', 'Séance créée par le prof')
+  insert into public.live_sessions (course_id, class_id, title)
+  values ('c0000000-0000-4000-8000-000000000001', 'aa110000-0000-4000-8000-000000000001',
+          'Séance créée par le prof')
   returning id into made;
   perform public.assert(made is not null, 'a member of staff can schedule a live class');
 
@@ -70,8 +81,9 @@ begin
 
   call auth.login_as('a0000000-0000-4000-8000-000000000001');
   begin
-    insert into public.live_sessions (course_id, title)
-    values ('c0000000-0000-4000-8000-000000000001', 'Cours pirate');
+    insert into public.live_sessions (course_id, class_id, title)
+    values ('c0000000-0000-4000-8000-000000000001', 'aa110000-0000-4000-8000-000000000001',
+            'Cours pirate');
   exception when insufficient_privilege then refused := true;
   end;
   reset role;
@@ -248,9 +260,11 @@ end $$;
 -- cross-class target every attempt below aims at.
 insert into public.courses (id, slug, title, status, published_at) values
   ('c0000000-0000-4000-8000-000000000002', 'hadith', 'Hadith', 'published', now());
-insert into public.live_sessions (id, course_id, title, status) values
+insert into public.classes (id, course_id, name) values
+  ('aa110000-0000-4000-8000-000000000003', 'c0000000-0000-4000-8000-000000000002', 'Classe unique');
+insert into public.live_sessions (id, course_id, class_id, title, status) values
   ('11110000-0000-4000-8000-000000000002', 'c0000000-0000-4000-8000-000000000002',
-   'Cours en direct — Hadith', 'live');
+   'aa110000-0000-4000-8000-000000000003', 'Cours en direct — Hadith', 'live');
 
 -- Re-open the Fiqh class the previous block ended, so these run against a live
 -- room rather than a closed one.
@@ -644,12 +658,12 @@ begin
 
   -- One that started six hours ago and was never closed, and one still inside
   -- the school's five-hour ceiling.
-  insert into public.live_sessions (id, course_id, title, status, started_at)
+  insert into public.live_sessions (id, course_id, class_id, title, status, started_at)
   values ('11110000-0000-4000-8000-0000000000f1', 'c0000000-0000-4000-8000-000000000001',
-          'Séance oubliée', 'live', now() - interval '6 hours');
-  insert into public.live_sessions (id, course_id, title, status, started_at)
+          'aa110000-0000-4000-8000-000000000001', 'Séance oubliée', 'live', now() - interval '6 hours');
+  insert into public.live_sessions (id, course_id, class_id, title, status, started_at)
   values ('11110000-0000-4000-8000-0000000000f2', 'c0000000-0000-4000-8000-000000000001',
-          'Séance en cours', 'live', now() - interval '1 hour');
+          'aa110000-0000-4000-8000-000000000001', 'Séance en cours', 'live', now() - interval '1 hour');
 
   closed := public.end_stale_live_sessions(5);
   perform public.assert(closed = 1, 'exactly the forgotten room is closed');
