@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2, Maximize2, Minimize2 } from 'lucide-react';
 import { Track, type Participant, type Room } from 'livekit-client';
 import { cn } from '@/lib/utils';
 import { clampPan, nextZoom } from '@/lib/live/zoom';
@@ -161,10 +161,42 @@ function SlideStage({
 }) {
   const t = useTranslations('live');
   const container = useRef<HTMLDivElement>(null);
+  /**
+   * The element that goes fullscreen: the image AND the pager. Requesting it
+   * on the image alone would take the page controls away at the moment the
+   * teacher needs them most.
+   */
+  const wrapper = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
+  const [fullscreen, setFullscreen] = useState(false);
+  const [canFullscreen, setCanFullscreen] = useState(false);
   /** What the page box holds while it is being typed in. */
   const [draft, setDraft] = useState(String(index + 1));
+
+  // `document.fullscreenEnabled` is false where the API is refused (an iPhone
+  // browser, an embedded frame); the control hides rather than failing.
+  useEffect(() => {
+    setCanFullscreen(Boolean(document.fullscreenEnabled));
+  }, []);
+
+  // Esc leaves fullscreen without going through the button, so the icon is
+  // driven by the document's state, not by our last click.
+  useEffect(() => {
+    const onChange = () => setFullscreen(document.fullscreenElement === wrapper.current);
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+
+  const toggleFullscreen = () => {
+    const element = wrapper.current;
+    if (!element) return;
+    if (document.fullscreenElement) {
+      void document.exitFullscreen();
+      return;
+    }
+    void element.requestFullscreen().catch(() => {});
+  };
 
   // A zoom belongs to the page it was made on. The next page opens fitted.
   useEffect(() => {
@@ -245,7 +277,7 @@ function SlideStage({
   }, [canPresent, index, total, onGo]);
 
   return (
-    <div className="flex size-full flex-col">
+    <div ref={wrapper} className="flex size-full flex-col bg-black">
       <div
         ref={container}
         className="relative min-h-0 flex-1 touch-none overflow-hidden"
@@ -288,15 +320,38 @@ function SlideStage({
           style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
         />
 
-        {view.scale > 1 && (
-          <button
-            type="button"
-            onClick={() => setView({ scale: 1, x: 0, y: 0 })}
-            title={t('slideZoomReset')}
-            className="absolute end-3 top-3 rounded-full bg-ink/75 px-3 py-1 text-[11px] text-white/80 transition-colors hover:text-white"
-          >
-            {t('slideZoomReset')} · {Math.round(view.scale * 100)}%
-          </button>
+        {(canPresent || view.scale > 1) && (
+          <div className="absolute end-3 top-3 flex flex-col items-end gap-2">
+            {canPresent && canFullscreen && (
+              <button
+                type="button"
+                onClick={toggleFullscreen}
+                title={fullscreen ? t('slideExitFullscreen') : t('slideFullscreen')}
+                aria-pressed={fullscreen}
+                className="rounded-full bg-ink/75 p-2 text-white/80 transition-colors hover:text-white"
+              >
+                {fullscreen ? (
+                  <Minimize2 className="size-4" aria-hidden="true" />
+                ) : (
+                  <Maximize2 className="size-4" aria-hidden="true" />
+                )}
+                <span className="sr-only">
+                  {fullscreen ? t('slideExitFullscreen') : t('slideFullscreen')}
+                </span>
+              </button>
+            )}
+
+            {view.scale > 1 && (
+              <button
+                type="button"
+                onClick={() => setView({ scale: 1, x: 0, y: 0 })}
+                title={t('slideZoomReset')}
+                className="rounded-full bg-ink/75 px-3 py-1 text-[11px] text-white/80 transition-colors hover:text-white"
+              >
+                {t('slideZoomReset')} · {Math.round(view.scale * 100)}%
+              </button>
+            )}
+          </div>
         )}
       </div>
 

@@ -1367,6 +1367,8 @@
     "share": "Partager l’écran",
     "slideNext": "Diapositive suivante",
     "slidePrev": "Diapositive précédente",
+    "slideFullscreen": "Afficher en plein écran",
+    "slideExitFullscreen": "Quitter le plein écran",
     "slideRemove": "Retirer la diapositive",
     "slideRemoveConfirm": "Retirer cette diapositive de la séance ? Les élèves ne la verront plus.",
     "slidePage": "Page {current} sur {total}",

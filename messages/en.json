@@ -1367,6 +1367,8 @@
     "share": "Share screen",
     "slideNext": "Next slide",
     "slidePrev": "Previous slide",
+    "slideFullscreen": "Show full screen",
+    "slideExitFullscreen": "Exit full screen",
     "slideRemove": "Remove slide",
     "slideRemoveConfirm": "Remove this slide from the session? Students will no longer see it.",
     "slidePage": "Page {current} of {total}",
