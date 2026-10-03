@@ -143,6 +143,13 @@ create policy class_members_join_own on public.class_members for insert
   to authenticated
   with check (user_id = auth.uid() and public.has_course_access(course_id));
 
+-- The office may place a student too — at the desk, for someone who cannot
+-- find their group. This is the policy that lets the composite foreign key
+-- refuse a mismatched (module, class) pair rather than the row being refused
+-- for the wrong reason.
+create policy class_members_add_staff on public.class_members for insert
+  to authenticated with check (public.is_staff());
+
 -- Leaving is the same act in reverse, and the office may remove anyone.
 create policy class_members_leave_own on public.class_members for delete
   to authenticated using (user_id = auth.uid() or public.is_staff());

@@ -180,12 +180,15 @@ begin
   raise notice 'a membership cannot point outside its module';
 
   -- The pair (Fiqh, Hadith class) does not exist, so the composite foreign key
-  -- refuses it even for staff — a form bug cannot split the two.
+  -- refuses it even for staff — a form bug cannot split the two. The student is
+  -- the stranger, not the buyer: the buyer already sits in a Fiqh class, and
+  -- the one-class-per-module unique index would fire before the foreign key,
+  -- proving the wrong rule.
   call auth.login_as('d0000000-0000-4000-8000-000000000005');
   begin
     insert into public.class_members (class_id, course_id, user_id)
     values ('f0000000-0000-4000-8000-000000000003', 'e0000000-0000-4000-8000-000000000001',
-            'd0000000-0000-4000-8000-000000000002');
+            'd0000000-0000-4000-8000-000000000004');
   exception when foreign_key_violation then refused := true;
   end;
   perform public.assert(refused, 'a membership cannot name another module''s class');
