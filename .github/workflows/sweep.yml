@@ -1,13 +1,17 @@
-# The sweep, on the cadence the shop actually needs.
+# The code half of the sweep: video retention (R2), installment reminders and
+# the spam purge. Hourly, not every fifteen minutes.
+#
+# Every call is a serverless invocation, and on a plan where Active CPU is the
+# scarce resource, ninety-six cold starts a day for a run that usually has
+# nothing to do was the wrong trade. The jobs that must be tight — cancelling
+# abandoned checkouts so a coupon and a pack seat come back — now run inside
+# Postgres, on pg_cron, with no function invocation and no egress at all (see
+# supabase/cron.sql). What is left here can wait an hour: a retention sweep,
+# a reminder, a purge.
 #
 # Vercel's Hobby plan refuses any cron more frequent than once a day — a
-# `*/15` expression does not merely get throttled, it FAILS THE DEPLOYMENT.
-# So vercel.json keeps a daily run (which is what makes the project deploy at
-# all), and this workflow drives the real cadence for free.
-#
-# It matters because the sweep is what hands back a coupon and a pack seat that
-# an abandoned checkout is holding. Once a day would mean a single-use office
-# code stays spent for up to 24 hours after a student closes the PayPal tab.
+# `*/15` expression does not merely get throttled, it FAILS THE DEPLOYMENT —
+# so vercel.json keeps its daily run and this workflow drives the cadence.
 #
 # Needs two repository secrets; without them the job exits cleanly rather than
 # failing the run, so a fork or a fresh clone is never red for missing config:
@@ -17,9 +21,9 @@ name: Sweep
 
 on:
   schedule:
-    # Every 15 minutes. GitHub queues scheduled runs, so treat this as
-    # "about every 15 minutes" rather than a guarantee.
-    - cron: '*/15 * * * *'
+    # Hourly. GitHub queues scheduled runs, so treat this as "about hourly"
+    # rather than a guarantee.
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 concurrency:

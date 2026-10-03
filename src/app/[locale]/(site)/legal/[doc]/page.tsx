@@ -15,6 +15,13 @@ import { requireLocale, routing } from '@/i18n/routing';
 const DOCS = ['terms', 'privacy', 'cookies'] as const;
 type Doc = (typeof DOCS)[number];
 
+/**
+ * An hour. The text changes when counsel changes it — the pages are
+ * prerendered, and the backstop only exists for an edit made outside the
+ * admin. Stated rather than inherited, so the number is a decision.
+ */
+export const revalidate = 3600;
+
 const TITLE_KEY: Record<Doc, 'termsTitle' | 'privacyTitle' | 'cookiesTitle'> = {
   terms: 'termsTitle',
   privacy: 'privacyTitle',

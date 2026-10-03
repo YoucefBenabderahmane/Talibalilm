@@ -63,6 +63,7 @@ const MESSAGE: Record<string, string> = {
   mixedCurrency: 'mixedCurrency',
   profileRequired: 'profileRequired',
   notApproved: 'notApproved',
+  emailProvider: 'emailProvider',
   emptyBasket: 'emptyBasket',
   payMismatch: 'payMismatch',
   payNotCompleted: 'payNotCompleted',

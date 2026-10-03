@@ -17,8 +17,9 @@ import { requireLocale } from '@/i18n/routing';
  * The list is the same for every reader, so the page is static and rebuilds on
  * the catalogue's clock rather than on every visit. The literal is Next's
  * requirement; keep it equal to `CATALOGUE_TTL` in `@/lib/data/cache-tags`.
+ * Admin edits revalidate the tag, so this is only the forgotten-tag backstop.
  */
-export const revalidate = 300;
+export const revalidate = 3600;
 
 export async function generateMetadata({
   params,

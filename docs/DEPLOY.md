@@ -72,6 +72,18 @@ psql "$DATABASE_URL" -f supabase/seed.sql
 Or paste it into the SQL editor. Every price in it is a placeholder to change
 in **Admin → Tarifs** — nothing about it is a decision baked into the code.
 
+## 3b. The in-database sweep (optional)
+
+`supabase/cron.sql` schedules the database-only housekeeping — cancelling
+abandoned checkouts, expiring entitlements, closing stale rooms, pruning
+rate-limit windows — with pg_cron, every fifteen minutes, inside Postgres. No
+function invocation, no Supabase egress. Enable **pg_cron** under Database →
+Extensions first, then run the file in the SQL editor.
+
+Without it, the app's `/api/cron/sweep` still runs those jobs on the hourly
+GitHub workflow — the coupon release window is just longer. Both are
+idempotent, so enabling pg_cron later is a plain re-run of the file.
+
 ## 4. Auth redirect URLs
 
 **Authentication → URL Configuration**:

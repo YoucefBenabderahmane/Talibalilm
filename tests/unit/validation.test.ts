@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { loginSchema, registerSchema, resetPasswordSchema } from '@/lib/validation/auth';
+import { isAllowedProviderEmail } from '@/lib/validation/email-providers';
 
 const valid = {
   fullName: 'Sihem Benali',
-  email: 'Sihem@Example.FR ',
+  email: 'Sihem@Gmail.com ',
   password: 'motdepasse1',
   passwordConfirm: 'motdepasse1',
   locale: 'fr' as const,
@@ -13,7 +14,7 @@ const valid = {
 describe('registerSchema', () => {
   it('normalises the email so two casings cannot become two accounts', () => {
     const parsed = registerSchema.parse(valid);
-    expect(parsed.email).toBe('sihem@example.fr');
+    expect(parsed.email).toBe('sihem@gmail.com');
   });
 
   it('rejects a password with no digit', () => {
@@ -43,12 +44,56 @@ describe('registerSchema', () => {
     const parsed = registerSchema.parse({ ...valid, role: 'admin' } as never);
     expect(parsed).not.toHaveProperty('role');
   });
+
+  it('accepts the mailbox providers the school allows', () => {
+    for (const email of [
+      'a@gmail.com',
+      'a@googlemail.com',
+      'a@hotmail.fr',
+      'a@outlook.co.uk',
+      'a@live.com',
+      'a@yahoo.com.br',
+      'a@ymail.com',
+      'a@rocketmail.com',
+      'a@icloud.com',
+      'a@me.com',
+      'a@mac.com',
+    ]) {
+      expect(registerSchema.safeParse({ ...valid, email }).success, email).toBe(true);
+    }
+  });
+
+  it('refuses a valid address from any other provider', () => {
+    const result = registerSchema.safeParse({ ...valid, email: 'sihem@example.fr' });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.some((i) => i.message === 'validation.emailProvider')).toBe(true);
+  });
+});
+
+describe('isAllowedProviderEmail', () => {
+  it('is not fooled by a lookalike subdomain', () => {
+    expect(isAllowedProviderEmail('a@mail.gmail.com')).toBe(false);
+    expect(isAllowedProviderEmail('a@notyahoo.fr')).toBe(false);
+  });
+
+  it('ignores casing and a missing or empty address', () => {
+    expect(isAllowedProviderEmail('a@HOTMAIL.FR')).toBe(true);
+    expect(isAllowedProviderEmail('')).toBe(false);
+    expect(isAllowedProviderEmail(null)).toBe(false);
+    expect(isAllowedProviderEmail('a@')).toBe(false);
+  });
 });
 
 describe('loginSchema', () => {
   it('does not enforce password rules on sign-in', () => {
     // An account created before a rule change must still be able to log in.
     expect(loginSchema.safeParse({ email: 'a@b.fr', password: 'x' }).success).toBe(true);
+  });
+
+  it('keeps accepting any provider — the rule is for new accounts only', () => {
+    // The office opens accounts on school addresses, and a rule introduced
+    // later must never lock an existing student out of their own account.
+    expect(loginSchema.safeParse({ email: 'ancien@example.fr', password: 'x' }).success).toBe(true);
   });
 });
 

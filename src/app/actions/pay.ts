@@ -7,6 +7,8 @@ import { getLocale } from 'next-intl/server';
 import { redirect } from '@/i18n/navigation';
 import { createClient, createAdminClient } from '@/lib/supabase/server';
 import { clientKey, rateLimit } from '@/lib/rate-limit';
+import { currentViewer, isStaff } from '@/lib/auth/guards';
+import { isAllowedProviderEmail } from '@/lib/validation/email-providers';
 import { getStudentProfile, isApproved, profileComplete } from '@/lib/data/profile';
 import { loadBasket } from '@/lib/commerce/basket';
 import { couponDiscount, MixedCurrencyError } from '@/lib/commerce/quote';
@@ -55,7 +57,7 @@ async function throttle(scope: string, limit: number, userId?: string): Promise<
   return ok;
 }
 
-async function requireUser(): Promise<{ id: string }> {
+async function requireUser(): Promise<{ id: string; email: string | null }> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -63,8 +65,26 @@ async function requireUser(): Promise<{ id: string }> {
 
   // An entitlement has to belong to somebody, so paying requires an account.
   // The selection survives the round trip in its own cookie.
-  if (!user) redirect({ href: '/login?next=%2Fcheckout%2Fpayment', locale: await getLocale() });
-  return { id: user.id };
+  if (!user) redirect({ href: '/login?next=%2Fcourses', locale: await getLocale() });
+  return { id: user.id, email: user.email ?? null };
+}
+
+/**
+ * May this account open a NEW order?
+ *
+ * The school takes new subscriptions only from the mailbox providers it can
+ * reach reliably — the same list new sign-ups must use. Registration already
+ * refuses the others, so this catches the accounts that predate the rule or
+ * were opened by the office on any address.
+ *
+ * It gates new orders only. Installments and desk codes settle a sale the
+ * school already accepted, so they are not sent through here, and staff are
+ * exempt because their address is the school's own.
+ */
+async function maySubscribe(user: { id: string; email: string | null }): Promise<boolean> {
+  if (isAllowedProviderEmail(user.email)) return true;
+  const viewer = await currentViewer();
+  return viewer?.id === user.id && isStaff(viewer);
 }
 
 /**
@@ -141,6 +161,10 @@ export async function beginPayPalCheckout(): Promise<BeginPayState> {
   // The account has to be let in before it can order. Browsing and trial
   // lessons stay open; this is the school deciding who joins, not a paywall.
   if (!(await isApproved())) return { ok: false, error: 'notApproved' };
+
+  // New orders only from the accepted mailbox providers. Checked before the
+  // profile, because no amount of enrolment detail changes this answer.
+  if (!(await maySubscribe(user))) return { ok: false, error: 'emailProvider' };
 
   // The enrolment details are required before money moves. The wizard only
   // reaches this step once they are saved, but a hand-posted action must not
@@ -466,6 +490,7 @@ async function claimFreeBasket(): Promise<
 
   if (!(await throttle('checkout-start', 20, user.id))) return { ok: false, error: 'rateLimited' };
   if (!(await isApproved())) return { ok: false, error: 'notApproved' };
+  if (!(await maySubscribe(user))) return { ok: false, error: 'emailProvider' };
   if (!profileComplete(await getStudentProfile())) {
     return { ok: false, error: 'profileRequired' };
   }
@@ -515,7 +540,7 @@ export async function claimFreeCourse(_previous: PayState, _formData: FormData):
   const locale = await getLocale();
   const result = await claimFreeBasket();
   if (!result.ok) {
-    if (result.error === 'emptyBasket') redirect({ href: '/checkout', locale });
+    if (result.error === 'emptyBasket') redirect({ href: '/courses', locale });
     return { error: result.error };
   }
 
@@ -594,7 +619,7 @@ export async function redeemOfficeCode(_previous: PayState, formData: FormData):
   if (!parsed.success) return { error: 'codeInvalid' };
 
   const { selection, quote } = await loadBasket();
-  if (!quote || !selection.delivery) redirect({ href: '/checkout', locale });
+  if (!quote || !selection.delivery) redirect({ href: '/courses', locale });
 
   const afterOffers = quote.subtotalCents - (quote.discountCents - quote.couponDiscountCents);
   const coupon = await claimCoupon(parsed.data, afterOffers);

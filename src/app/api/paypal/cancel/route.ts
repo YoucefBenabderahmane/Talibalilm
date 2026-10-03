@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { cancelOrder } from '@/lib/commerce/orders';
+import { paypalFailurePath } from '@/lib/commerce/paypal-failure';
 import { siteUrl } from '@/lib/env';
 
 /**
@@ -8,7 +9,8 @@ import { siteUrl } from '@/lib/env';
  *
  * The order is cancelled and any coupon it claimed is handed back, so changing
  * your mind does not quietly burn a single-use code. The selection cookie is
- * left alone — they are returned to the payment step with their basket intact.
+ * left alone — they are returned to the module they were buying, with their
+ * basket intact and the cancellation said under the button.
  */
 export async function GET(request: NextRequest) {
   const base = siteUrl();
@@ -22,5 +24,5 @@ export async function GET(request: NextRequest) {
     if (user) await cancelOrder(orderId, user.id);
   }
 
-  return NextResponse.redirect(`${base}/checkout?error=cancelled`);
+  return NextResponse.redirect(`${base}${await paypalFailurePath(orderId, 'cancelled')}`);
 }

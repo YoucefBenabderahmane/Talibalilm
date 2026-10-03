@@ -1,38 +1,36 @@
 import { expect, test } from '@playwright/test';
 
 /**
- * The checkout flow.
+ * The checkout.
  *
- * Without a Supabase project the catalogue is empty, so these cover the parts
- * that hold regardless of what is on sale: the step guards, the fact that a
- * basket is never indexed, and that no price is ever carried in the page for a
- * browser to alter. The arithmetic itself is covered exhaustively in
- * tests/unit/quote.test.ts, and the entitlements it produces in
- * supabase/tests/rls_commerce.sql.
+ * It lives on each module's page now, under the module it sells — there is no
+ * standalone `/checkout` any more, and the old URLs redirect to the catalogue.
+ * These cover the parts that hold regardless of what is on sale: the redirects,
+ * the step guards, the fact that a basket is never indexed, and that no price
+ * is ever carried in the page for a browser to alter. The arithmetic itself is
+ * covered exhaustively in tests/unit/quote.test.ts, and the entitlements it
+ * produces in supabase/tests/rls_commerce.sql.
  */
 test.describe('checkout', () => {
-  test('opens on step one and is never indexed', async ({ page }) => {
+  test('the old checkout URL lands on the catalogue', async ({ page }) => {
     await page.goto('/checkout');
-
-    await expect(page.getByRole('heading', { level: 1 })).toContainText('Inscription');
-    await expect(page.getByRole('heading', { name: 'Votre cursus' })).toBeVisible();
-    await expect(page.locator('meta[name="robots"]')).toHaveAttribute('content', /noindex/);
+    await expect(page).toHaveURL(/\/courses$/);
+    await expect(page.getByRole('heading', { level: 1 })).toContainText('Tous les modules');
   });
 
-  test('a deep link past the start goes back to the start', async ({ page }) => {
-    // The failure this catches is a later step rendering a form with nothing
-    // in it, or worse, a total of zero.
+  test('the older step URLs land there too', async ({ page }) => {
+    // The wizard was once five URLs. A bookmark or a saved PayPal return must
+    // not 404 — it belongs on the page where a module is chosen now.
     for (const step of ['mode', 'modules', 'review', 'payment']) {
       await page.goto(`/checkout/${step}`);
-      await expect(page).toHaveURL(/\/checkout$/);
+      await expect(page).toHaveURL(/\/courses$/);
     }
   });
 
-  test('the flow is translated, not just routed', async ({ page }) => {
-    await page.goto('/en/checkout');
-    await expect(page.getByRole('heading', { level: 1 })).toContainText('Enrolment');
-    await expect(page.getByRole('heading', { name: 'Your cursus' })).toBeVisible();
-    await expect(page.getByText('Step 1 of 5')).toBeVisible();
+  test('the module page carries the checkout, translated', async ({ page }) => {
+    await page.goto('/en/courses/fiqh-al-ibadat#inscription');
+    await expect(page.getByRole('heading', { name: 'Your option' })).toBeVisible();
+    await expect(page.getByText('Step 1 of 4')).toBeVisible();
   });
 
   test('a module page asks how the module is bought, then enrols', async ({ page }) => {
@@ -100,7 +98,7 @@ test.describe('checkout', () => {
     // Prices are recomputed server-side on every step. A hidden input carrying
     // cents would be a way to pay less, so there must not be one anywhere in
     // the flow.
-    await page.goto('/checkout');
+    await page.goto('/courses/fiqh-al-ibadat#inscription');
     const html = await page.content();
     expect(html).not.toMatch(/name="(price|amount|total|price_cents|total_cents)"/);
   });

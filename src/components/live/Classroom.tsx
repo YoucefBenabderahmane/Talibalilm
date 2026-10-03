@@ -105,6 +105,9 @@ export function Classroom({
   const deckRef = useRef(deck);
   /** Slide ids whose one-off signing request is already in flight. */
   const signing = useRef<Set<string>>(new Set());
+  /** Board strokes waiting to be persisted, and the timer that flushes them. */
+  const boardQueue = useRef<BoardOp[]>([]);
+  const boardFlush = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** The tab strip and controls, measured so the phone sheet can stop above them. */
   const footRef = useRef<HTMLDivElement | null>(null);
   const [footHeight, setFootHeight] = useState(0);
@@ -383,12 +386,62 @@ export function Classroom({
     }).catch(() => {});
   };
 
+  /**
+   * Board strokes, queued and posted in batches.
+   *
+   * One request per stroke was one function invocation per stroke — hundreds
+   * in a lesson, each paying startup CPU. The room has already drawn them, so
+   * persistence can wait a moment and travel together. The queue flushes when
+   * it is full, after a short pause, or when the page goes away.
+   */
+  const flushBoard = useCallback(() => {
+    if (boardFlush.current !== null) {
+      clearTimeout(boardFlush.current);
+      boardFlush.current = null;
+    }
+    const ops = boardQueue.current;
+    boardQueue.current = [];
+    if (ops.length === 0) return;
+    void fetch('/api/live/board', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, ops }),
+      keepalive: true,
+    }).catch(() => {});
+  }, [sessionId]);
+
+  const queueBoardOp = useCallback(
+    (op: BoardOp) => {
+      boardQueue.current.push(op);
+      if (boardQueue.current.length >= 50) {
+        flushBoard();
+        return;
+      }
+      if (boardFlush.current === null) {
+        boardFlush.current = setTimeout(flushBoard, 2000);
+      }
+    },
+    [flushBoard],
+  );
+
+  useEffect(() => {
+    // `pagehide` as well as unmount: closing the tab does not always run a
+    // React cleanup, and the last strokes of a lesson are the ones a late
+    // joiner is most likely to look for.
+    const onHide = () => flushBoard();
+    window.addEventListener('pagehide', onHide);
+    return () => {
+      window.removeEventListener('pagehide', onHide);
+      flushBoard();
+    };
+  }, [flushBoard]);
+
   const drawOp = (op: BoardOp) => {
     setBoard((b) => ({ ...b, ops: [...b.ops, op] }));
     live.send({ t: 'board', op });
-    // Persisted, so somebody joining late still sees it. The write is refused
-    // by policy for anyone but staff, so nothing here needs to check.
-    persist('/api/live/board', { sessionId, op });
+    // Persisted in batches, so somebody joining late still sees it. The write
+    // is refused by policy for anyone but staff, so nothing here checks.
+    queueBoardOp(op);
   };
 
   const clearBoard = () => {

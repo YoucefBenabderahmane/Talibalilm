@@ -56,6 +56,25 @@ test.describe('auth pages', () => {
     await expect(page.getByText('Cette adresse e-mail n’est pas valide.')).toBeVisible();
   });
 
+  test('registration refuses a provider outside the accepted list', async ({ page }) => {
+    await page.goto('/register');
+
+    await page.getByLabel('Nom et prénom').fill('Amina Test');
+    await page.getByLabel('Adresse e-mail').fill('amina@example.fr');
+    await page.getByLabel('Mot de passe', { exact: true }).fill('MotDePasse!2345');
+    await page.getByLabel('Confirmer le mot de passe').fill('MotDePasse!2345');
+    await page.locator('input[name="acceptTerms"]').check();
+    await page.getByRole('button', { name: /créer mon compte/i }).click();
+
+    // The rule is enforced by the server action, before Supabase is reached,
+    // so this runs wherever the suite runs.
+    await expect(
+      page.getByText(
+        'L’inscription est réservée aux adresses Gmail, Hotmail, Outlook, Yahoo ou iCloud. Utilisez l’une de ces adresses ou contactez l’institut.',
+      ),
+    ).toBeVisible();
+  });
+
   test('the forgot-password form does not reveal whether an account exists', async ({ page }) => {
     await page.goto('/forgot-password');
     await page.getByLabel('Adresse e-mail').fill('personne@example.fr');
