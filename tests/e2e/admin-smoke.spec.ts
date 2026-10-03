@@ -87,10 +87,13 @@ test.describe('the admin course builder', () => {
     await expect(page.getByText('Cet écran d’administration n’a pas pu s’afficher')).toHaveCount(0);
 
     // The module's groups live on their own step: the office creates them
-    // here, the students join one from the module's public page.
+    // here, the students join one from the module's public page. The last
+    // step, selected by position: the labels are hidden on a phone, so the
+    // accessible name of the tab is just its number there.
     await page
       .getByRole('navigation', { name: 'Étapes du module' })
-      .getByRole('button', { name: /Classes/ })
+      .getByRole('button')
+      .last()
       .click();
     await expect(page.getByRole('button', { name: 'Créer la classe' })).toBeVisible();
   });
