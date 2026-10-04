@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/server';
 import { supabaseConfigured } from '@/lib/env';
 import { requireStaff } from '@/lib/auth/guards';
 import { checkImage, MAX_IMAGE_BYTES } from '@/lib/media/image';
-import { isSlideKeyFor, safeFilename, slideKey, slideName } from '@/lib/storage/key';
+import { deckKey, isDeckKey, isSlideKeyFor, safeFilename, slideKey, slideName } from '@/lib/storage/key';
 import {
   deleteObject,
   r2Configured,
@@ -46,7 +46,14 @@ import { errorDetail } from '@/lib/supabase/error-detail';
  */
 
 const OK: AdminState = { ok: true };
-const MAX_SLIDES = 200;
+/**
+ * The most slides one session may hold.
+ *
+ * Raised from 200 for the school's long decks — a 400-page PDF is a normal
+ * term's material — and the cap is now reported with a count rather than as a
+ * bare "deck full".
+ */
+const MAX_SLIDES = 500;
 /** Pages signed or confirmed in one round trip. Big enough to hide the latency, small enough to fail cheaply. */
 const MAX_BATCH = 50;
 
@@ -70,6 +77,8 @@ export interface UploadBatchResult extends AdminState {
   skipped?: number;
 }
 
+const FINGERPRINT = z.string().regex(/^[a-f0-9]{64}$/);
+
 const batchRequestSchema = z.object({
   sessionId: z.string().uuid(),
   pages: z
@@ -79,6 +88,12 @@ const batchRequestSchema = z.object({
         // bytes are read back in `confirmSlides` before any slide exists.
         contentType: z.enum(['image/png', 'image/jpeg', 'image/webp']),
         byteSize: z.coerce.number().int().min(1).max(MAX_IMAGE_BYTES),
+        /**
+         * The PDF this page came from, when the caller has one. Present means
+         * the page is filed under the shared deck prefix, so the next class
+         * can reuse it; absent means a one-off image, filed under the session.
+         */
+        fingerprint: FINGERPRINT.optional(),
       }),
     )
     .min(1)
@@ -94,7 +109,7 @@ const batchRequestSchema = z.object({
  */
 export async function requestSlideUploads(input: {
   sessionId: string;
-  pages: { contentType: string; byteSize: number }[];
+  pages: { contentType: string; byteSize: number; fingerprint?: string }[];
 }): Promise<UploadBatchResult> {
   if (!r2Configured) return { ok: false, error: 'storageUnavailable' };
 
@@ -132,7 +147,11 @@ export async function requestSlideUploads(input: {
           : page.contentType === 'image/webp'
             ? 'webp'
             : 'jpg';
-      const key = slideKey(parsed.data.sessionId, extension, slideName());
+      // A page of a hashed PDF is filed once, under the deck, so another class
+      // attaches it instead of uploading it again.
+      const key = page.fingerprint
+        ? deckKey(page.fingerprint, extension, slideName())
+        : slideKey(parsed.data.sessionId, extension, slideName());
       const url = await signUpload(key, page.contentType);
       return url ? { key, url, contentType: page.contentType } : null;
     }),
@@ -189,7 +208,7 @@ export async function confirmSlides(input: {
 
   // Before anything reaches the bucket: is this a key we would have issued for
   // this class? A caller naming another class's object stops here.
-  if (uploads.some((upload) => !isSlideKeyFor(upload.key, sessionId))) {
+  if (uploads.some((upload) => !isSlideKeyFor(upload.key, sessionId) && !isDeckKey(upload.key))) {
     return { ok: false, error: 'invalid' };
   }
 
@@ -283,6 +302,172 @@ export async function confirmSlides(input: {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Shared decks — a PDF rendered once, attached to every class that uses it
+// ---------------------------------------------------------------------------
+
+export interface CatalogPage {
+  key: string;
+  filename: string;
+  mimeType: string;
+  byteSize: number;
+}
+
+/**
+ * Does this PDF's rendering already exist?
+ *
+ * `supported` is false when the migration has not been applied yet: the caller
+ * then uses the old session-scoped keys, which the database still accepts, so
+ * a deploy that lands before the SQL keeps uploading slides rather than
+ * refusing them all.
+ */
+export async function lookupDeck(
+  fingerprint: string,
+): Promise<{ known: boolean; supported: boolean }> {
+  const parsed = FINGERPRINT.safeParse(fingerprint);
+  if (!parsed.success) return { known: false, supported: false };
+
+  const supabase = await staffClient();
+  const { data, error } = await supabase
+    .from('deck_catalog')
+    .select('fingerprint')
+    .eq('fingerprint', parsed.data)
+    .maybeSingle();
+  if (error) {
+    reportError('slides.lookupDeck', error, { fingerprint: parsed.data });
+    return { known: false, supported: false };
+  }
+  return { known: Boolean(data), supported: true };
+}
+
+/**
+ * Attach an already-rendered deck to this session.
+ *
+ * Rows only: the objects are the deck's, and this session's `live_slides`
+ * points at them. Nothing is copied and nothing is uploaded, which is the
+ * whole point — the second class to use a 400-page PDF waits a second, not
+ * five minutes.
+ */
+export async function attachDeck(input: {
+  sessionId: string;
+  fingerprint: string;
+}): Promise<ConfirmBatchResult> {
+  const parsed = z
+    .object({ sessionId: z.string().uuid(), fingerprint: FINGERPRINT })
+    .safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'invalid' };
+
+  const supabase = await staffClient();
+
+  const { data: catalog, error } = await supabase
+    .from('deck_catalog')
+    .select('pages')
+    .eq('fingerprint', parsed.data.fingerprint)
+    .maybeSingle();
+  if (error || !catalog) return { ok: false, error: 'invalid' };
+
+  const pages = catalog.pages as unknown as CatalogPage[];
+  if (!Array.isArray(pages) || pages.length === 0) return { ok: false, error: 'invalid' };
+
+  const { data: last } = await supabase
+    .from('live_slides')
+    .select('display_order')
+    .eq('session_id', parsed.data.sessionId)
+    .order('display_order', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const base = (last?.display_order ?? -1) + 1;
+
+  const { data: rows, error: insertError } = await supabase
+    .from('live_slides')
+    .insert(
+      pages.map((page, index) => ({
+        session_id: parsed.data.sessionId,
+        storage_key: page.key,
+        filename: safeFilename(page.filename),
+        mime_type: page.mimeType,
+        byte_size: page.byteSize,
+        display_order: base + index,
+      })),
+    )
+    .select('id, storage_key, filename');
+  if (insertError || !rows) {
+    reportError('slides.attachDeck', insertError ?? new Error('no rows'), {
+      sessionId: parsed.data.sessionId,
+    });
+    return {
+      ok: false,
+      error: 'saveFailed',
+      detail: insertError ? errorDetail(insertError) : 'no row returned',
+    };
+  }
+
+  const byKey = new Map(rows.map((row) => [row.storage_key, row]));
+  const ordered = pages
+    .map((page) => byKey.get(page.key))
+    .filter((row): row is { id: string; storage_key: string; filename: string } => row !== undefined);
+  const urls = await Promise.all(ordered.map((row) => signDownload(row.storage_key)));
+
+  revalidatePath('/[locale]/admin/live/[id]', 'page');
+
+  return {
+    ok: true,
+    slides: ordered.map((row, i) => ({
+      id: row.id,
+      url: urls[i] ?? null,
+      filename: row.filename,
+    })),
+  };
+}
+
+/** Record a freshly rendered deck so the next class can attach it. */
+export async function registerDeck(input: {
+  fingerprint: string;
+  pages: CatalogPage[];
+}): Promise<AdminState> {
+  const parsed = z
+    .object({
+      fingerprint: FINGERPRINT,
+      pages: z
+        .array(
+          z.object({
+            key: z.string().max(300),
+            filename: z.string().max(300).default(''),
+            mimeType: z.enum(['image/png', 'image/jpeg', 'image/webp']),
+            byteSize: z.coerce.number().int().min(1).max(MAX_IMAGE_BYTES),
+          }),
+        )
+        .min(1)
+        .max(500),
+    })
+    .safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'invalid' };
+
+  if (parsed.data.pages.some((page) => !isDeckKey(page.key))) {
+    return { ok: false, error: 'invalid' };
+  }
+
+  const supabase = await staffClient();
+  const { error } = await supabase.from('deck_catalog').upsert(
+    {
+      fingerprint: parsed.data.fingerprint,
+      page_count: parsed.data.pages.length,
+      pages: parsed.data.pages.map((page) => ({
+        key: page.key,
+        filename: safeFilename(page.filename),
+        mimeType: page.mimeType,
+        byteSize: page.byteSize,
+      })),
+    },
+    { onConflict: 'fingerprint', ignoreDuplicates: true },
+  );
+  if (error) {
+    reportError('slides.registerDeck', error, { fingerprint: parsed.data.fingerprint });
+    return { ok: false, error: 'saveFailed', detail: errorDetail(error) };
+  }
+  return OK;
+}
+
 const removeSchema = z.object({ id: z.string().uuid(), sessionId: z.string().uuid() });
 
 /**
@@ -316,7 +501,10 @@ export async function removeSlide(input: { id: string; sessionId: string }): Pro
   // The row is gone, so the slide is already unreachable; a bucket object that
   // outlives its row is waste, not an exposure, and a failed delete is logged
   // rather than shown to the teacher as a failure to remove the slide.
-  await deleteObject(slide.storage_key);
+  //
+  // A shared deck's objects are NOT deleted: another class points at the same
+  // bytes. Removing the slide from this session means removing the row.
+  if (slide.storage_key.startsWith('live/')) await deleteObject(slide.storage_key);
 
   revalidatePath('/[locale]/admin/live/[id]', 'page');
   return OK;
@@ -398,7 +586,12 @@ export async function clearSlides(sessionId: string): Promise<ClearDeckResult> {
     .eq('session_id', parsed.data);
   if (readError) return { ok: false, error: 'saveFailed', detail: errorDetail(readError) };
 
-  const keys = (rows ?? []).map((row) => row.storage_key);
+  // Only this session's own objects. A shared deck's pages are the same bytes
+  // for every class using it, and clearing one class's deck must not blank
+  // another's.
+  const keys = (rows ?? [])
+    .map((row) => row.storage_key)
+    .filter((key) => key.startsWith('live/'));
 
   const { error } = await supabase.from('live_slides').delete().eq('session_id', parsed.data);
   if (error) return { ok: false, error: 'saveFailed', detail: errorDetail(error) };

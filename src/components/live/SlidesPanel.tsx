@@ -30,6 +30,7 @@ export function SlidesPanel({
   slides,
   current,
   canPresent,
+  sharing,
   onGo,
   onRemove,
   onClearAll,
@@ -39,6 +40,8 @@ export function SlidesPanel({
   slides: { id: string; url: string | null; filename: string }[];
   current: number;
   canPresent: boolean;
+  /** A screen share holds the stage right now. One content at a time. */
+  sharing: boolean;
   onGo: (index: number) => void;
   /** The teacher's removal, mid-lesson. Resolves when the server has answered. */
   onRemove: (slideId: string) => Promise<void>;
@@ -53,7 +56,7 @@ export function SlidesPanel({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
-  const { busy, converting, error, detail, upload: uploadFiles } = upload;
+  const { busy, converting, error, detail, skipped, upload: uploadFiles } = upload;
 
   const remove = async (slide: { id: string }) => {
     if (!window.confirm(t('slideRemoveConfirm'))) return;
@@ -112,6 +115,13 @@ export function SlidesPanel({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {uploader}
+
+      {canPresent && sharing && (
+        <div className="mx-2 mt-2 rounded-lg border border-gold-500/30 bg-gold-500/10 p-2.5 text-center">
+          <p className="text-[11px] leading-relaxed text-gold-200">{t('slidesShareActive')}</p>
+        </div>
+      )}
+
       {error && (
         <div role="alert" className="px-3 pb-1.5 text-center">
           <p className="text-[11px] leading-relaxed text-red-300">
@@ -121,6 +131,12 @@ export function SlidesPanel({
             <p className="mt-1 font-mono text-[10px] break-words text-white/35">{detail}</p>
           )}
         </div>
+      )}
+
+      {skipped > 0 && (
+        <p role="status" className="px-3 pb-1.5 text-center text-[11px] leading-relaxed text-gold-200">
+          {t('slidesSkipped', { count: skipped })}
+        </p>
       )}
 
       {removeError && (

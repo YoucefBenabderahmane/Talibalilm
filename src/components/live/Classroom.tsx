@@ -21,6 +21,7 @@ import { ChatPanel } from './ChatPanel';
 import { ParticipantsPanel, type HostAction } from './ParticipantsPanel';
 import { Whiteboard } from './Whiteboard';
 import { SlidesPanel } from './SlidesPanel';
+import { RemoteAudio } from './RemoteAudio';
 import { useSlideUpload } from './useSlideUpload';
 import { useRecorder } from './useRecorder';
 import {
@@ -100,6 +101,8 @@ export function Classroom({
   const [dropping, setDropping] = useState(false);
   /** Bumped by a `sync` message, so the teacher re-announces where the lesson is. */
   const [syncAsk, setSyncAsk] = useState(0);
+  /** Chat lines that arrived while another tab was open. */
+  const [unread, setUnread] = useState(0);
 
   const stageRef = useRef<HTMLDivElement | null>(null);
   const deckRef = useRef(deck);
@@ -172,20 +175,48 @@ export function Classroom({
       else if (message.t === 'focus') {
         setTab(message.tab);
         if (message.boardOnStage !== undefined) setBoardOnStage(message.boardOnStage);
+      } else if (message.t === 'chat') {
+        // The teacher missed a whole conversation by not noticing the tab;
+        // the badge is the answer to that, not a louder notification.
+        if (tab !== 'chat') setUnread((n) => n + 1);
       } else if (message.t === 'deck') refreshDeck();
       else if (message.t === 'sync') setSyncAsk((n) => n + 1);
       else if (message.t === 'ended') window.location.assign('/dashboard');
     },
-    [ensureSlideUrl, refreshDeck],
+    [ensureSlideUrl, refreshDeck, tab],
   );
+
+  // Opening the tab is reading it.
+  useEffect(() => {
+    if (tab === 'chat') setUnread(0);
+  }, [tab]);
 
   const live = useRoom({ roomToken, isHost, onMessage });
   // Pulled out for the effect below: `live` is a fresh object each render, and
   // the effect must fire on the room's state, not on React re-rendering.
   const { status: roomStatus, send: sendToRoom } = live;
 
-  /** Show one slide to the class — the teacher's move, refused from anyone else. */
+  /**
+   * Show one slide to the class — the teacher's move, refused from anyone else.
+   *
+   * One content at a time, the way Zoom works: presenting a slide takes the
+   * stage from whoever is sharing it. The teacher's own share stops; a
+   * student's is revoked, because the alternative is a slide index nobody can
+   * see while the shared screen stays on top of it.
+   */
   const present = (index: number) => {
+    const sharer = live.people.find((p) => p.sharing);
+    if (sharer) {
+      if (sharer.isLocal) {
+        void live.toggleShare();
+      } else {
+        const form = new FormData();
+        form.set('sessionId', sessionId);
+        form.set('userId', sharer.identity);
+        form.set('action', 'deny-screen');
+        void controlParticipant({ ok: true }, form);
+      }
+    }
     setSlide(index);
     live.send({ t: 'slide', i: index });
   };
@@ -596,7 +627,14 @@ export function Classroom({
               : 'text-white/50 hover:text-white/80',
           )}
         >
-          <Icon className={variant === 'bar' ? 'size-5' : 'size-4'} aria-hidden="true" />
+          <span className="relative">
+            <Icon className={variant === 'bar' ? 'size-5' : 'size-4'} aria-hidden="true" />
+            {key === 'chat' && unread > 0 && tab !== 'chat' && (
+              <span className="absolute -end-2 -top-1.5 flex size-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-semibold text-white">
+                {unread > 9 ? '9+' : unread}
+              </span>
+            )}
+          </span>
           {variant === 'panel' ? (
             <span className="sr-only sm:not-sr-only">{label}</span>
           ) : (
@@ -693,6 +731,11 @@ export function Classroom({
               />
             )}
           </div>
+
+          {/* Everyone's voice, mounted here rather than inside a video tile:
+              a camera-off student, anyone past the strip's twelve tiles and
+              the sharer all had no audio element at all. */}
+          <RemoteAudio room={live.room} />
 
           {/* The strip and the controls, kept above the phone sheet so a
               teacher can still mute and raise a hand with the panel open. */}
@@ -835,6 +878,7 @@ export function Classroom({
               slides={deck}
               current={slide}
               canPresent={isHost}
+              sharing={presenting !== null}
               onGo={goToSlide}
               onRemove={removeSlideAt}
               onClearAll={clearDeck}

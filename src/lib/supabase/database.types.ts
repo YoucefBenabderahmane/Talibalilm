@@ -1244,6 +1244,36 @@ export interface Database {
           },
         ];
       };
+      deck_catalog: {
+        Row: {
+          fingerprint: string;
+          page_count: number;
+          /** Ordered [{ key, filename, mimeType, byteSize }], one per page. */
+          pages: Json;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          fingerprint: string;
+          page_count: number;
+          pages: Json;
+          created_by?: string | null;
+        };
+        Update: {
+          page_count?: number;
+          pages?: Json;
+          created_by?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'deck_catalog_created_by_fkey';
+            columns: ['created_by'];
+            isOneToOne: false;
+            referencedRelation: 'profiles';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
       class_members: {
         Row: {
           class_id: string;

@@ -52,9 +52,9 @@ export function Stage({
   const sharer = presenting ? people.find((p) => p.identity === presenting) : undefined;
   const focusIsShare = Boolean(sharer);
 
-  // The strip: everyone except whoever holds the stage, with cameras on first.
+  // The strip: cameras on first. The sharer keeps their own camera here —
+  // sharing a screen must not make the teacher vanish from their own class.
   const strip = people
-    .filter((p) => p.identity !== sharer?.identity)
     .filter((p) => (focusIsShare || slide ? true : p.identity !== host?.identity))
     .filter((p) => p.camOn || p.isLocal || p.handUp || p.speaking)
     .slice(0, 12);

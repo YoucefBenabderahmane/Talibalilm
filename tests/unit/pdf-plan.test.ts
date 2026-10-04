@@ -32,6 +32,11 @@ describe('how a PDF is turned into slides', () => {
     expect(pdfWorkerCount(16, 80 * 1024 * 1024, 100)).toBe(2);
   });
 
+  it('drops to ONE worker for a huge file — two copies is how the tab dies', () => {
+    expect(pdfWorkerCount(16, 200 * 1024 * 1024, 400)).toBe(1);
+    expect(pdfWorkerCount(16, 119 * 1024 * 1024, 400)).toBe(2);
+  });
+
   it('never spawns more workers than pages, and never zero', () => {
     expect(pdfWorkerCount(16, 1_000_000, 2)).toBe(2);
     expect(pdfWorkerCount(16, 1_000_000, 1)).toBe(1);
@@ -68,5 +73,25 @@ describe('the page-order buffer', () => {
     for (const page of [5, 4, 3, 2]) expect(buffer.push(page, page)).toEqual([]);
     expect(buffer.held).toBe(4);
     expect(buffer.push(1, 1)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('releases the pages behind a page that will never arrive', () => {
+    // The regression this exists for: page 2 failed to encode, and without
+    // `skip` every page after it stayed in the buffer forever — the deck
+    // silently ended at the first canvas the browser refused.
+    const buffer = new PageReorder<number>();
+    expect(buffer.push(1, 1)).toEqual([1]);
+    expect(buffer.push(3, 3)).toEqual([]);
+    expect(buffer.skip(2)).toEqual([3]);
+    expect(buffer.held).toBe(0);
+  });
+
+  it('remembers a gap marked before its neighbours arrived', () => {
+    const buffer = new PageReorder<number>();
+    expect(buffer.skip(2)).toEqual([]);
+    expect(buffer.push(3, 3)).toEqual([]);
+    // 2 is known missing, so 3 is released as soon as 1 lands.
+    expect(buffer.push(1, 1)).toEqual([1, 3]);
+    expect(buffer.held).toBe(0);
   });
 });
