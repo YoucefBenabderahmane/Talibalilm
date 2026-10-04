@@ -234,7 +234,7 @@ async function renderDeck(
   options: PdfPageOptions,
 ): Promise<number> {
   const primary = await openDocument(pdfjs, engine, bytes);
-  const pages = Math.min(primary.document_.numPages, options.maxPages ?? 200);
+  const pages = Math.min(primary.document_.numPages, options.maxPages ?? 500);
   if (pages === 0) {
     await primary.task.destroy().catch(() => {});
     throw new PdfError('empty', 'no pages');
@@ -338,6 +338,13 @@ async function renderParallel(
           for (const item of reorder.push(n, { page: n, file: rendered })) {
             await emit(item.file, item.page);
           }
+        } else {
+          // A page the browser could not encode, even retried smaller. Mark it
+          // missing so the pages behind it are released rather than held
+          // forever — the silent truncation this buffer used to cause.
+          for (const item of reorder.skip(n)) {
+            await emit(item.file, item.page);
+          }
         }
       } catch (thrown) {
         failure = thrown;
@@ -356,7 +363,14 @@ async function renderParallel(
   return delivered;
 }
 
-/** One page as a file, or null when the canvas would not encode. */
+/**
+ * One page as a file, or null when the canvas would not encode.
+ *
+ * A failed encode is nearly always memory: the browser refuses `toBlob` rather
+ * than throwing. So the page is drawn again at half the width before it is
+ * given up on — a softer slide beats a missing one — and only then does it
+ * return null, which the caller records as a page that will never arrive.
+ */
 async function renderPage(
   document_: DocumentProxy,
   n: number,
@@ -366,29 +380,40 @@ async function renderPage(
   const page = await document_.getPage(n);
   try {
     const unscaled = page.getViewport({ scale: 1 });
-    const viewport = page.getViewport({ scale: width / unscaled.width });
 
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(viewport.width);
-    canvas.height = Math.round(viewport.height);
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new PdfError('engine', 'no 2d canvas context');
+    for (const factor of [1, 0.5]) {
+      const viewport = page.getViewport({ scale: (width * factor) / unscaled.width });
 
-    // White behind the page: a PDF with a transparent background would
-    // otherwise come out as black text on black.
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    // Annotation mode 0: a slide is a picture of a page, and a link or a form
-    // field drawn into it is work nobody asked for.
-    await page.render({ canvas, viewport, annotationMode: 0 }).promise;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(viewport.width);
+      canvas.height = Math.round(viewport.height);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new PdfError('engine', 'no 2d canvas context');
 
-    const blob = await encodePage(canvas);
-    if (!blob) return null;
-    const extension =
-      blob.type === 'image/webp' ? 'webp' : blob.type === 'image/jpeg' ? 'jpg' : 'png';
-    return new File([blob], `${baseName}-${String(n).padStart(2, '0')}.${extension}`, {
-      type: blob.type,
-    });
+      // White behind the page: a PDF with a transparent background would
+      // otherwise come out as black text on black.
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      // Annotation mode 0: a slide is a picture of a page, and a link or a form
+      // field drawn into it is work nobody asked for.
+      await page.render({ canvas, viewport, annotationMode: 0 }).promise;
+
+      const blob = await encodePage(canvas);
+      if (blob) {
+        const extension =
+          blob.type === 'image/webp' ? 'webp' : blob.type === 'image/jpeg' ? 'jpg' : 'png';
+        return new File([blob], `${baseName}-${String(n).padStart(2, '0')}.${extension}`, {
+          type: blob.type,
+        });
+      }
+
+      // Release the pixels before the retry; the retry exists because the
+      // browser was out of room for them.
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+
+    return null;
   } finally {
     page.cleanup();
   }

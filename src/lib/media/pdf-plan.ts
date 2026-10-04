@@ -17,6 +17,12 @@ const MIN_WORKERS = 2;
 const MAX_WORKERS = 4;
 /** Past this, extra workers cost more in memory than they save in time. */
 const BIG_FILE_BYTES = 60 * 1024 * 1024;
+/**
+ * Past this, one worker: every worker holds its own copy of the document, and
+ * two copies of a 200 MB PDF is how the tab dies before the deck is finished.
+ * Slower, and it completes.
+ */
+const HUGE_FILE_BYTES = 120 * 1024 * 1024;
 
 /** The width each page renders at, from how many pages the deck has. */
 export function pdfTargetWidth(pages: number): number {
@@ -33,6 +39,7 @@ export function pdfTargetWidth(pages: number): number {
  */
 export function pdfWorkerCount(cores: number, fileSize: number, pages: number): number {
   if (pages <= 1) return 1;
+  if (fileSize > HUGE_FILE_BYTES) return 1;
   const byCores = Math.min(MAX_WORKERS, Math.max(MIN_WORKERS, Math.floor(cores / 2)));
   const bySize = fileSize > BIG_FILE_BYTES ? MIN_WORKERS : byCores;
   return Math.max(1, Math.min(bySize, pages));
@@ -47,15 +54,43 @@ export function pdfWorkerCount(cores: number, fileSize: number, pages: number): 
  */
 export class PageReorder<T> {
   private readonly waiting = new Map<number, T>();
+  /** Pages that will never arrive — a canvas that would not encode, even smaller. */
+  private readonly missing = new Set<number>();
   private next = 1;
 
   push(page: number, value: T): T[] {
     if (page < this.next) return [];
     this.waiting.set(page, value);
+    return this.drain();
+  }
 
+  /**
+   * A page that will never arrive.
+   *
+   * Without this, one failed page held every page behind it in the buffer
+   * forever and the deck silently ended there: the class lost everything after
+   * the first canvas the browser could not encode. Marking it missing lets the
+   * run behind it through.
+   */
+  skip(page: number): T[] {
+    if (page < this.next) return [];
+    this.waiting.delete(page);
+    this.missing.add(page);
+    return this.drain();
+  }
+
+  /** Whatever run is consecutive now, in page order. */
+  private drain(): T[] {
     const ready: T[] = [];
-    while (this.waiting.has(this.next)) {
-      ready.push(this.waiting.get(this.next) as T);
+    for (;;) {
+      if (this.missing.has(this.next)) {
+        this.missing.delete(this.next);
+        this.next += 1;
+        continue;
+      }
+      const value = this.waiting.get(this.next);
+      if (value === undefined) break;
+      ready.push(value);
       this.waiting.delete(this.next);
       this.next += 1;
     }

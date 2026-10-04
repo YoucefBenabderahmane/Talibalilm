@@ -1,7 +1,7 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { Hand, Mic, MicOff, MonitorUp, UserMinus, UserPlus, Video, VideoOff } from 'lucide-react';
+import { Hand, Mic, MicOff, MonitorUp, UserMinus, UserPlus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { RoomPerson } from './useRoom';
 
@@ -12,6 +12,9 @@ export type HostAction =
   | 'deny-camera'
   | 'allow-screen'
   | 'deny-screen'
+  /** Unmute and allow the camera in one decision. */
+  | 'allow-speak'
+  | 'deny-speak'
   | 'remove';
 
 /**
@@ -87,62 +90,66 @@ export function ParticipantsPanel({
             {/* Everything below is the teacher's, and exists only on their page. */}
             {isHost && !person.isHost && (
               <>
-                {person.asking && (
+                {(person.asking || person.handUp) && (
                   <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg bg-gold-500/10 p-2">
                     <p className="min-w-0 flex-1 text-[11px] text-gold-200">
-                      {person.asking === 'camera' ? t('asksCamera') : t('asksScreen')}
+                      {person.asking === 'screen'
+                        ? t('asksScreen')
+                        : person.asking === 'camera'
+                          ? t('asksCamera')
+                          : t('raisesHand')}
                     </p>
                     <button
                       type="button"
                       onClick={() => {
                         onAction(
                           person.identity,
-                          person.asking === 'camera' ? 'allow-camera' : 'allow-screen',
+                          person.asking === 'screen' ? 'allow-screen' : 'allow-speak',
                         );
                         onClearAsk(person.identity);
                       }}
                       className="rounded-full bg-brand-500 px-3 py-1 text-[11px] font-medium text-white hover:bg-brand-600"
                     >
-                      {t('allow')}
+                      {person.asking === 'screen' ? t('allow') : t('allowSpeak')}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => onClearAsk(person.identity)}
-                      className="rounded-full bg-white/10 px-3 py-1 text-[11px] text-white/80 hover:bg-white/20"
-                    >
-                      {t('deny')}
-                    </button>
+                    {person.asking && (
+                      <button
+                        type="button"
+                        onClick={() => onClearAsk(person.identity)}
+                        className="rounded-full bg-white/10 px-3 py-1 text-[11px] text-white/80 hover:bg-white/20"
+                      >
+                        {t('deny')}
+                      </button>
+                    )}
                   </div>
                 )}
 
                 <div className="mt-2 flex items-center gap-1">
+                  {/* One decision, not two: a student asked to take part gets
+                      the microphone and the camera together, the way a teacher
+                      means it. Screen sharing stays its own request. */}
                   <button
                     type="button"
-                    title={person.micOn ? t('muteThem') : t('unmuteThem')}
-                    onClick={() => onAction(person.identity, person.micOn ? 'mute' : 'unmute')}
-                    className={cn(icon, 'text-white/60 hover:bg-white/10 hover:text-white')}
-                  >
-                    {person.micOn ? <MicOff className="size-3.5" /> : <Mic className="size-3.5" />}
-                    <span className="sr-only">
-                      {person.micOn ? t('muteThem') : t('unmuteThem')}
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    title={person.camOn ? t('denyCamera') : t('allowCamera')}
+                    title={person.micOn && person.camOn ? t('denySpeak') : t('allowSpeak')}
                     onClick={() =>
-                      onAction(person.identity, person.camOn ? 'deny-camera' : 'allow-camera')
+                      onAction(
+                        person.identity,
+                        person.micOn && person.camOn ? 'deny-speak' : 'allow-speak',
+                      )
                     }
-                    className={cn(icon, 'text-white/60 hover:bg-white/10 hover:text-white')}
+                    className={cn(
+                      icon,
+                      'text-white/60 hover:bg-white/10 hover:text-white',
+                      person.micOn && person.camOn && 'bg-brand-500/20 text-brand-200',
+                    )}
                   >
-                    {person.camOn ? (
-                      <VideoOff className="size-3.5" />
+                    {person.micOn && person.camOn ? (
+                      <MicOff className="size-3.5" />
                     ) : (
-                      <Video className="size-3.5" />
+                      <Mic className="size-3.5" />
                     )}
                     <span className="sr-only">
-                      {person.camOn ? t('denyCamera') : t('allowCamera')}
+                      {person.micOn && person.camOn ? t('denySpeak') : t('allowSpeak')}
                     </span>
                   </button>
 

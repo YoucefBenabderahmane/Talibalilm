@@ -1,8 +1,16 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
-import { confirmSlides, requestSlideUploads } from '@/app/actions/slides';
+import {
+  attachDeck,
+  confirmSlides,
+  lookupDeck,
+  registerDeck,
+  requestSlideUploads,
+  type CatalogPage,
+} from '@/app/actions/slides';
 import { MAX_IMAGE_BYTES } from '@/lib/media/image';
+import { isDeckKey } from '@/lib/storage/key';
 import { runPool } from '@/lib/media/pool';
 import { classifyUpload } from '@/lib/media/upload-kind';
 import { PdfError } from '@/lib/media/pdf';
@@ -39,6 +47,8 @@ export interface SlideUploadState {
    * worker that would not start, and only one of those was ever true.
    */
   detail: string | null;
+  /** Pages the deck had no room for — the cap, made visible rather than silent. */
+  skipped: number;
   clearError: () => void;
   upload: (files: FileList | File[]) => Promise<void>;
 }
@@ -54,8 +64,14 @@ export interface SlideUploadHandlers {
   onAdded?: (slide: { id: string; url: string | null; filename: string }, index: number) => void;
 }
 
-/** Pages signed and confirmed in one round trip. */
-const BATCH = 12;
+/**
+ * Pages signed and confirmed in one round trip.
+ *
+ * Ten, so a large deck reaches the class in tens: the first ten pages appear
+ * while the next ten are still being drawn, rather than the whole file landing
+ * at the end.
+ */
+const BATCH = 10;
 /** PUTs in flight at once. Wider saturates a home uplink; narrower wastes it. */
 const PUTS = 4;
 /** Batches queued or running before the renderer is made to wait. Bounds memory. */
@@ -69,6 +85,7 @@ export function useSlideUpload(
   const [converting, setConverting] = useState<{ page: number; pages: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<string | null>(null);
+  const [skipped, setSkipped] = useState(0);
   const addedRef = useRef(false);
   // Kept in refs so `upload` is not rebuilt — and cannot go stale — every time
   // the caller re-renders.
@@ -81,14 +98,24 @@ export function useSlideUpload(
     async (input: FileList | File[]) => {
       setError(null);
       setDetail(null);
+      setSkipped(0);
       addedRef.current = false;
       const chosen = Array.from(input);
       /** A batch of pages at a time, in order, across every file of this drop. */
       let added = 0;
+      let skippedPages = 0;
 
-      const queue: File[] = [];
+      type QueuedPage = { file: File; fingerprint?: string };
+
+      const queue: QueuedPage[] = [];
       let chain: Promise<void> = Promise.resolve();
       let pendingBatches = 0;
+      /**
+       * A freshly rendered PDF's pages, in order, as they land — what the
+       * catalogue is written from once the whole deck is up. Keyed by the
+       * PDF's fingerprint so two PDFs in one drop cannot mix.
+       */
+      const catalogPages = new Map<string, CatalogPage[]>();
 
       /**
        * Sign, upload and confirm one batch.
@@ -97,21 +124,30 @@ export function useSlideUpload(
        * in whatever order the network gives, and the confirm must not reorder
        * the pages because of it.
        */
-      const processBatchOnce = async (batch: File[]) => {
+      const processBatchOnce = async (batch: QueuedPage[]) => {
         const tickets = await requestSlideUploads({
           sessionId,
-          pages: batch.map((file) => ({ contentType: file.type, byteSize: file.size })),
+          pages: batch.map(({ file, fingerprint }) => ({
+            contentType: file.type,
+            byteSize: file.size,
+            fingerprint,
+          })),
         });
         if (!tickets.ok || !tickets.tickets || tickets.tickets.length === 0) {
           setError(tickets.error ?? 'uploadFailed');
           return;
         }
-        if (tickets.skipped) setError('deckFull');
+        if (tickets.skipped) {
+          skippedPages += tickets.skipped;
+          setSkipped(skippedPages);
+          setError('deckFull');
+        }
 
         const accepted = batch.slice(0, tickets.tickets.length);
-        const slots: ({ key: string; filename: string } | null)[] = accepted.map(() => null);
+        const slots: ({ key: string; filename: string; fingerprint?: string } | null)[] =
+          accepted.map(() => null);
 
-        await runPool(accepted, PUTS, async (file, index) => {
+        await runPool(accepted, PUTS, async ({ file }, index) => {
           const ticket = tickets.tickets?.[index];
           if (!ticket) return;
           try {
@@ -121,7 +157,11 @@ export function useSlideUpload(
               headers: { 'Content-Type': ticket.contentType },
             });
             if (!put.ok) throw new Error(`HTTP ${put.status}`);
-            slots[index] = { key: ticket.key, filename: file.name };
+            slots[index] = {
+              key: ticket.key,
+              filename: file.name,
+              fingerprint: accepted[index]?.fingerprint,
+            };
           } catch (thrown) {
             // A rejected fetch — a CORS refusal, a dropped connection — arrives
             // with no status and only the browser's own words. This is an
@@ -138,6 +178,22 @@ export function useSlideUpload(
           }
         });
 
+        // The catalogue is written from the pages that actually landed, in
+        // page order; a failed PUT leaves no entry, which is what stops an
+        // incomplete deck from being registered for other classes to attach.
+        for (let i = 0; i < slots.length; i += 1) {
+          const slot = slots[i];
+          const file = accepted[i]?.file;
+          if (slot?.fingerprint && file && isDeckKey(slot.key)) {
+            catalogPages.get(slot.fingerprint)?.push({
+              key: slot.key,
+              filename: slot.filename,
+              mimeType: file.type,
+              byteSize: file.size,
+            });
+          }
+        }
+
         const uploads = slots.filter(
           (slot): slot is { key: string; filename: string } => slot !== null,
         );
@@ -149,7 +205,10 @@ export function useSlideUpload(
           if (done.detail) setDetail(done.detail);
           return;
         }
-        for (const slide of done.slides) onAddedRef.current?.(slide, added++);
+        for (const slide of done.slides) {
+          addedRef.current = true;
+          onAddedRef.current?.(slide, added++);
+        }
 
         const refused = done.failed?.[0];
         if (refused) {
@@ -166,7 +225,7 @@ export function useSlideUpload(
        * every batch behind it in the chain and rejects a promise nobody awaits,
        * which is a console warning instead of the sentence the teacher needs.
        */
-      const processBatch = async (batch: File[]) => {
+      const processBatch = async (batch: QueuedPage[]) => {
         try {
           await processBatchOnce(batch);
         } catch (thrown) {
@@ -183,12 +242,12 @@ export function useSlideUpload(
        * applies backpressure: the engine waits for a batch to land rather than
        * turning a hundred pages into a hundred megabytes of canvas.
        */
-      const enqueue = (file: File): Promise<void> | void => {
+      const enqueue = (file: File, fingerprint?: string): Promise<void> | void => {
         if (file.size > MAX_IMAGE_BYTES) {
           setError('tooLarge');
           return;
         }
-        queue.push(file);
+        queue.push({ file, fingerprint });
         if (queue.length >= BATCH) {
           const batch = queue.splice(0, BATCH);
           pendingBatches += 1;
@@ -229,12 +288,53 @@ export function useSlideUpload(
         try {
           if (kind === 'pdf') {
             const { pdfPages } = await import('@/lib/media/pdf');
+            const fingerprint = await sha256Hex(file);
+
+            // The same PDF taught to another class: attach the pages that
+            // already exist. No rendering, no upload — the whole reason a
+            // 400-page deck can appear in a second on the second class.
+            const { known, supported } = await lookupDeck(fingerprint);
+            if (known) {
+              const attached = await attachDeck({ sessionId, fingerprint });
+              if (attached.ok && attached.slides) {
+                for (const slide of attached.slides) {
+                  addedRef.current = true;
+                  onAddedRef.current?.(slide, added++);
+                }
+              } else {
+                setError(attached.error ?? 'uploadFailed');
+                if (attached.detail) setDetail(attached.detail);
+              }
+              continue;
+            }
+
+            // The migration may not be applied yet: without the catalogue,
+            // pages use the old session-scoped keys and everything still works.
+            if (supported) catalogPages.set(fingerprint, []);
+            let totalPages = 0;
             const delivered = await pdfPages(file, {
-              onProgress: (progress) => setConverting(progress),
-              onPage: (page) => enqueue(page.file),
+              onProgress: (progress) => {
+                totalPages = progress.pages;
+                setConverting(progress);
+              },
+              onPage: (page) => enqueue(page.file, supported ? fingerprint : undefined),
             });
             setConverting(null);
             if (delivered === 0) setError('pdfEmpty');
+
+            // The whole deck must be up before it is catalogued: a catalogue
+            // entry is a promise to every future class that these pages exist.
+            await flush();
+            const pages = catalogPages.get(fingerprint) ?? [];
+            if (
+              supported &&
+              totalPages > 0 &&
+              delivered === totalPages &&
+              pages.length === totalPages
+            ) {
+              await registerDeck({ fingerprint, pages });
+            }
+            catalogPages.delete(fingerprint);
           } else {
             enqueue(file);
           }
@@ -276,10 +376,22 @@ export function useSlideUpload(
     converting,
     error,
     detail,
+    skipped,
     clearError: () => {
       setError(null);
       setDetail(null);
     },
     upload,
   };
+}
+
+/**
+ * The PDF's own name, as bytes: SHA-256 of the file.
+ *
+ * The catalogue is keyed by this, so the same document is recognised whatever
+ * it is called — teachers rename exports, and a filename is not an identity.
+ */
+async function sha256Hex(file: File): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
 }

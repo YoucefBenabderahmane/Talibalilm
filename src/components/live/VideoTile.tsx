@@ -31,7 +31,6 @@ export function VideoTile({
 }) {
   const t = useTranslations('live');
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -50,18 +49,6 @@ export function VideoTile({
       pub?.track?.detach(video);
     };
   }, [participant, source]);
-
-  useEffect(() => {
-    const audio = audioRef.current;
-    // The local participant never plays their own microphone back — that is an
-    // echo, not a feature.
-    if (!audio || person.isLocal) return;
-    const pub = participant.getTrackPublication(Track.Source.Microphone);
-    if (pub?.track) pub.track.attach(audio);
-    return () => {
-      pub?.track?.detach(audio);
-    };
-  }, [participant, person.isLocal]);
 
   const initials = (person.name || '?')
     .split(/\s+/)
@@ -84,9 +71,15 @@ export function VideoTile({
         autoPlay
         playsInline
         muted={person.isLocal}
-        className={cn('size-full object-cover', !showVideo && 'hidden')}
+        className={cn(
+          'size-full',
+          // A shared screen is letterboxed, never cropped: `object-cover` cut
+          // the edges off a document, which is the part being pointed at. A
+          // camera fills its tile.
+          source === Track.Source.ScreenShare ? 'object-contain' : 'object-cover',
+          !showVideo && 'hidden',
+        )}
       />
-      {!person.isLocal && <audio ref={audioRef} autoPlay />}
 
       {!showVideo && (
         <div className="flex size-full items-center justify-center">

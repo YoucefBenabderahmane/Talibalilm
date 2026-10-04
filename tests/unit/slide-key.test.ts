@@ -1,17 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import {
   corsProbeKey,
+  deckKey,
+  isDeckKey,
   isSlideKeyFor,
   safeFilename,
   slideKey,
   slideName,
   CORS_PROBE_KEY_PATTERN,
+  DECK_KEY_PATTERN,
   SLIDE_KEY_PATTERN,
   VIDEO_KEY_PATTERN,
 } from '@/lib/storage/key';
 
 const SESSION = '11110000-0000-4000-8000-000000000001';
 const OTHER = '11110000-0000-4000-8000-000000000002';
+const FINGERPRINT = 'a'.repeat(64);
 
 describe('slideKey', () => {
   it('files a slide under its own class', () => {
@@ -56,6 +60,26 @@ describe('isSlideKeyFor', () => {
 
   it('refuses a key for a session id that is not one', () => {
     expect(isSlideKeyFor('live/not-a-uuid/abcd1234efgh.png', 'not-a-uuid')).toBe(false);
+  });
+});
+
+describe('shared deck keys', () => {
+  it('files a page under the PDF fingerprint, not the session', () => {
+    expect(deckKey(FINGERPRINT, 'webp', 'abcd1234efgh')).toBe(
+      `decks/${FINGERPRINT}/abcd1234efgh.webp`,
+    );
+  });
+
+  it('produces a key the database constraint accepts', () => {
+    expect(DECK_KEY_PATTERN.test(deckKey(FINGERPRINT, 'png', slideName()))).toBe(true);
+    expect(isDeckKey(deckKey(FINGERPRINT, 'jpg', slideName()))).toBe(true);
+  });
+
+  it('refuses a fingerprint that is not a sha-256, or a path trick', () => {
+    expect(isDeckKey('decks/short/abcd1234efgh.png')).toBe(false);
+    expect(isDeckKey(`decks/${FINGERPRINT}/../../secret.png`)).toBe(false);
+    expect(isDeckKey(`decks/${FINGERPRINT}/payload.html`)).toBe(false);
+    expect(isDeckKey(`live/${SESSION}/abcd1234efgh.png`)).toBe(false);
   });
 });
 

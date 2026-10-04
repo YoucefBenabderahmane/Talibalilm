@@ -16,6 +16,15 @@
 /** Mirrors `live_slides_key_owned` in the migration. Keep the two in step. */
 export const SLIDE_KEY_PATTERN = /^live\/[0-9a-f-]{36}\/[A-Za-z0-9_-]{8,64}\.(png|jpg|webp)$/;
 
+/**
+ * A page of a shared deck: `decks/<sha256 of the PDF>/<random>.<ext>`.
+ *
+ * Content-addressed, so the same PDF taught to a second class reuses these
+ * objects instead of rendering and uploading them again. Mirrors the second
+ * branch of `live_slides_key_owned`.
+ */
+export const DECK_KEY_PATTERN = /^decks\/[a-f0-9]{64}\/[A-Za-z0-9_-]{8,64}\.(png|jpg|webp)$/;
+
 export type SlideExtension = 'png' | 'jpg' | 'webp';
 
 /**
@@ -46,6 +55,22 @@ export function slideName(): string {
  */
 export function isSlideKeyFor(key: string, sessionId: string): boolean {
   return SLIDE_KEY_PATTERN.test(key) && key.startsWith(`live/${sessionId}/`);
+}
+
+/** One page of a shared deck, under the PDF's own fingerprint. */
+export function deckKey(fingerprint: string, extension: SlideExtension, random: string): string {
+  return `decks/${fingerprint}/${random}.${extension}`;
+}
+
+/**
+ * Is this a key shaped like a shared deck page?
+ *
+ * Staff-only path, and the fingerprint is not secret — the bytes are the same
+ * for every class that uses the deck, and a session's `live_slides` row is
+ * still what decides who may read it.
+ */
+export function isDeckKey(key: string): boolean {
+  return DECK_KEY_PATTERN.test(key);
 }
 
 /** The filename kept for display: no path, no control characters, bounded. */

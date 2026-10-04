@@ -266,6 +266,11 @@ const controlSchema = z.object({
     'deny-camera',
     'allow-screen',
     'deny-screen',
+    // One approval for the two things a student needs to take part: unmute and
+    // allow the camera. Separate buttons were a teacher's two clicks for one
+    // decision, and the wrong one got pressed.
+    'allow-speak',
+    'deny-speak',
     'remove',
     'restore',
   ]),
@@ -291,8 +296,18 @@ export async function controlParticipant(
   const args = {
     target_session: sessionId,
     target_user: userId,
-    set_muted: action === 'mute' ? true : action === 'unmute' ? false : null,
-    set_camera: action === 'allow-camera' ? true : action === 'deny-camera' ? false : null,
+    set_muted:
+      action === 'mute' || action === 'deny-speak'
+        ? true
+        : action === 'unmute' || action === 'allow-speak'
+          ? false
+          : null,
+    set_camera:
+      action === 'allow-camera' || action === 'allow-speak'
+        ? true
+        : action === 'deny-camera' || action === 'deny-speak'
+          ? false
+          : null,
     set_screen: action === 'allow-screen' ? true : action === 'deny-screen' ? false : null,
     set_banned: action === 'remove' ? true : action === 'restore' ? false : null,
   };
