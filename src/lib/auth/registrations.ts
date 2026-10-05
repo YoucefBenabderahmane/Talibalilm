@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { supabaseConfigured, siteUrl } from '@/lib/env';
 import { institut } from '@/lib/content/institut';
 import { officeInbox, sendMail } from '@/lib/email/send';
-import { newRegistration, welcomeStudent } from '@/lib/email/templates';
+import { newRegistration } from '@/lib/email/templates';
 import { reportError } from '@/lib/observability/report';
 
 /**
@@ -71,31 +71,4 @@ export async function notifyOfficeOfRegistration(input: {
   }
 }
 
-/**
- * Welcome the student.
- *
- * Same contract as the alert above and for the same reason: called from
- * `after()`, swallows everything, and can never turn a completed registration
- * into an error page. A welcome message is a courtesy; losing it must not lose
- * the account.
- */
-export async function sendWelcomeEmail(input: {
-  fullName: string;
-  email: string;
-  locale: string;
-}): Promise<void> {
-  try {
-    await sendMail(
-      welcomeStudent({
-        to: input.email,
-        locale: input.locale === 'en' ? 'en' : 'fr',
-        fullName: input.fullName,
-        signInUrl: `${siteUrl()}/dashboard`,
-      }),
-    );
-  } catch (cause) {
-    reportError('registrations.welcome', cause, {
-      note: 'the account was created; only the welcome message failed',
-    });
-  }
-}
+
