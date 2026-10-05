@@ -21,6 +21,7 @@ import { ChatPanel } from './ChatPanel';
 import { ParticipantsPanel, type HostAction } from './ParticipantsPanel';
 import { Whiteboard } from './Whiteboard';
 import { SlidesPanel } from './SlidesPanel';
+import { SharePip } from './SharePip';
 import { RemoteAudio } from './RemoteAudio';
 import { useSlideUpload } from './useSlideUpload';
 import { useRecorder } from './useRecorder';
@@ -95,6 +96,12 @@ export function Classroom({
   });
   /** The board in a 320px column is not something anyone can teach on. */
   const [boardOnStage, setBoardOnStage] = useState(false);
+  /**
+   * A running share reduced to the corner while the slide or the board has the
+   * stage. The teacher's decision, sent as part of `focus` so the class sees
+   * the same layout — Meet's "minimize", not "stop sharing".
+   */
+  const [sharePip, setSharePip] = useState(false);
   const [panelWidth, setPanelWidth] = useState(340);
   const [removed, setRemoved] = useState(removedPeople);
   /** A file is over the room; the class is about to get a new slide. */
@@ -175,6 +182,7 @@ export function Classroom({
       else if (message.t === 'focus') {
         setTab(message.tab);
         if (message.boardOnStage !== undefined) setBoardOnStage(message.boardOnStage);
+        if (message.sharePip !== undefined) setSharePip(message.sharePip);
       } else if (message.t === 'chat') {
         // The teacher missed a whole conversation by not noticing the tab;
         // the badge is the answer to that, not a louder notification.
@@ -199,24 +207,14 @@ export function Classroom({
   /**
    * Show one slide to the class — the teacher's move, refused from anyone else.
    *
-   * One content at a time, the way Zoom works: presenting a slide takes the
-   * stage from whoever is sharing it. The teacher's own share stops; a
-   * student's is revoked, because the alternative is a slide index nobody can
-   * see while the shared screen stays on top of it.
+   * A running share is reduced to the corner, never stopped: Meet's rule, and
+   * the reason the teacher asked for it. The shared screen keeps running while
+   * the class reads the slide, and the corner's expand button puts it back on
+   * the stage. Ending a student's share outright is still the participants
+   * panel's job, one button away.
    */
   const present = (index: number) => {
-    const sharer = live.people.find((p) => p.sharing);
-    if (sharer) {
-      if (sharer.isLocal) {
-        void live.toggleShare();
-      } else {
-        const form = new FormData();
-        form.set('sessionId', sessionId);
-        form.set('userId', sharer.identity);
-        form.set('action', 'deny-screen');
-        void controlParticipant({ ok: true }, form);
-      }
-    }
+    if (live.people.some((p) => p.sharing)) setSharePip(true);
     setSlide(index);
     live.send({ t: 'slide', i: index });
   };
@@ -304,7 +302,21 @@ export function Classroom({
    * because the room carries no copy of a voice the browser never plays back.
    */
   const recorder = useRecorder(recordingBaseName, {
-    stage: () => stageRef.current?.querySelector('video, img, canvas') as HTMLVideoElement | null,
+    // Whatever the stage shows, plus the reduced share in its corner: every
+    // element the room marks, framed on the stage box. The file matches the
+    // class's view rather than one element of it.
+    stage: () => {
+      const container = stageRef.current?.querySelector<HTMLElement>('[data-record-container]');
+      if (!container) return null;
+      const items = Array.from(container.querySelectorAll<HTMLElement>('[data-record]')).map(
+        (element) => ({
+          element: element as HTMLVideoElement | HTMLImageElement | HTMLCanvasElement,
+          rect: element.getBoundingClientRect(),
+        }),
+      );
+      if (items.length === 0) return null;
+      return { container: container.getBoundingClientRect(), items };
+    },
     audio: () =>
       Array.from(live.room.remoteParticipants.values())
         .flatMap((p) => Array.from(p.trackPublications.values()))
@@ -362,8 +374,8 @@ export function Classroom({
    */
   useEffect(() => {
     if (!isHost || roomStatus !== 'connected') return;
-    sendToRoom({ t: 'focus', tab, boardOnStage });
-  }, [isHost, tab, boardOnStage, roomStatus, sendToRoom]);
+    sendToRoom({ t: 'focus', tab, boardOnStage, sharePip });
+  }, [isHost, tab, boardOnStage, sharePip, roomStatus, sendToRoom]);
 
   // A student asks once, on entry. The teacher's answer arrives as an ordinary
   // focus message, so a browser that joins halfway through opens on the lesson
@@ -377,7 +389,7 @@ export function Classroom({
   // page the class is on. Only when asked — this must not fire on every slide.
   useEffect(() => {
     if (!isHost || roomStatus !== 'connected' || syncAsk === 0) return;
-    sendToRoom({ t: 'focus', tab, boardOnStage });
+    sendToRoom({ t: 'focus', tab, boardOnStage, sharePip });
     if (slideRef.current >= 0) sendToRoom({ t: 'slide', i: slideRef.current });
     // Depends on the ask alone: `tab`, `boardOnStage` and the slide are read
     // through refs or sent by the effects that already watch them.
@@ -390,6 +402,16 @@ export function Classroom({
       (live.sharing ? (live.people.find((p) => p.isLocal)?.identity ?? null) : null),
     [live.people, live.sharing],
   );
+
+  const sharer = presenting ? live.people.find((p) => p.identity === presenting) : undefined;
+  /** The share owns the stage only while it has not been reduced. */
+  const shareOnStage = Boolean(sharer) && !sharePip;
+
+  // A share that has ended leaves nothing to reduce. The next one starts on the
+  // stage unless a slide or the board claims it — the start handler decides.
+  useEffect(() => {
+    if (presenting === null) setSharePip(false);
+  }, [presenting]);
 
   const currentSlideUrl = slide >= 0 ? (deck[slide]?.url ?? null) : null;
 
@@ -578,6 +600,24 @@ export function Classroom({
   }
 
   /**
+   * The teacher moved tabs. When a share is running, the tabs that own the
+   * stage take it back: the deck appears and the share drops to the corner,
+   * the board expands, and the class follows both through `focus`. Chat and
+   * participants have no stage content, so a share stays where it is.
+   */
+  const focusTab = (key: Tab) => {
+    if (key === 'slides') refreshDeck();
+    setTab(key);
+    if (!live.people.some((p) => p.sharing)) return;
+    if (key === 'slides' && deckRef.current.length > 0) {
+      present(slideRef.current >= 0 ? slideRef.current : 0);
+    } else if (key === 'board') {
+      setSharePip(true);
+      setBoardOnStage(true);
+    }
+  };
+
+  /**
    * One strip of tabs, in the two places it lives: across the top of the side
    * panel on a wide screen, and along the bottom of the stage on a phone,
    * where a thumb can reach it. The bar opens the sheet; the panel is already
@@ -608,13 +648,11 @@ export function Classroom({
               }
               // The deck's links are minted when the panel is opened, not when
               // the room is joined: a viewer who never opens it never pays.
-              if (key === 'slides') refreshDeck();
-              setTab(key);
+              focusTab(key);
               setPanelOpen(true);
               return;
             }
-            if (key === 'slides') refreshDeck();
-            setTab(key);
+            focusTab(key);
           }}
           className={cn(
             'flex flex-1 items-center justify-center gap-1.5 px-2 py-2.5 text-[12px] transition-colors',
@@ -705,9 +743,20 @@ export function Classroom({
               <div className="flex flex-1 items-center justify-center">
                 <Loader2 className="size-6 animate-spin text-white/40" aria-hidden="true" />
               </div>
-            ) : boardOnStage ? (
-              <div className="relative m-3 min-h-0 flex-1 overflow-hidden rounded-2xl border border-white/10">
+            ) : boardOnStage && !shareOnStage ? (
+              <div
+                data-record-container
+                className="relative m-3 min-h-0 flex-1 overflow-hidden rounded-2xl border border-white/10"
+              >
                 {boardCanvas}
+                {sharer && sharePip && (
+                  <SharePip
+                    room={live.room}
+                    person={sharer}
+                    canExpand={isHost}
+                    onExpand={() => setSharePip(false)}
+                  />
+                )}
                 <button
                   type="button"
                   onClick={() => setBoardOnStage(false)}
@@ -728,6 +777,9 @@ export function Classroom({
                 slideIndex={slide}
                 slideTotal={deck.length}
                 onGoSlide={goToSlide}
+                sharePip={sharePip}
+                onMinimizeShare={() => setSharePip(true)}
+                onExpandShare={() => setSharePip(false)}
               />
             )}
           </div>
@@ -756,7 +808,13 @@ export function Classroom({
               recording={recorder.state}
               onMic={() => void live.toggleMic()}
               onCam={() => void live.toggleCam()}
-              onShare={() => void live.toggleShare()}
+              onShare={() => {
+                // A share started while the class is reading a slide or the
+                // board begins in the corner; with nothing else on stage it
+                // takes the stage, as it always has.
+                setSharePip(slideRef.current >= 0 || boardOnStage);
+                void live.toggleShare();
+              }}
               onHand={() => live.raiseHand(!live.handUp)}
               onAskCamera={() => live.send({ t: 'ask', what: 'camera' })}
               onAskScreen={() => live.send({ t: 'ask', what: 'screen' })}

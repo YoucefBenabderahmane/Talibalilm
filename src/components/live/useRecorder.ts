@@ -22,9 +22,25 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  */
 export type RecorderState = 'idle' | 'starting' | 'recording' | 'paused' | 'saving';
 
+/** One drawable element of the stage, and where it sits inside the stage box. */
+export interface RecordFrameItem {
+  element: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement;
+  rect: DOMRect;
+}
+
+export interface RecordFrame {
+  /** The stage box the recording is framed on. */
+  container: DOMRect;
+  /** What is inside it, in paint order. */
+  items: RecordFrameItem[];
+}
+
 export interface RecordSources {
-  /** The element filling the stage right now: a video, or a slide image. */
-  stage: () => HTMLVideoElement | HTMLImageElement | null;
+  /**
+   * What the stage is showing right now, and where. A reduced screen share is
+   * an item like any other, so the recording keeps it in its corner.
+   */
+  stage: () => RecordFrame | null;
   /** Every audio track worth capturing — the local mic and each participant. */
   audio: () => MediaStreamTrack[];
 }
@@ -144,24 +160,45 @@ export function useRecorder(fileBaseName: string, sources: RecordSources): Recor
 
     const draw = () => {
       frameRef.current = requestAnimationFrame(draw);
-      const element = sourcesRef.current.stage();
+      const frame = sourcesRef.current.stage();
       ctx.fillStyle = '#16221f';
       ctx.fillRect(0, 0, WIDTH, HEIGHT);
-      if (!element) return;
+      if (!frame || frame.container.width <= 0 || frame.container.height <= 0) return;
 
-      const w = element instanceof HTMLVideoElement ? element.videoWidth : element.naturalWidth;
-      const h = element instanceof HTMLVideoElement ? element.videoHeight : element.naturalHeight;
-      if (!w || !h) return;
+      // The stage box maps onto the 1280x720 frame, and everything inside keeps
+      // its place in it — so the reduced share is recorded in its corner,
+      // exactly where the class saw it.
+      const scale = Math.min(WIDTH / frame.container.width, HEIGHT / frame.container.height);
+      const offsetX = (WIDTH - frame.container.width * scale) / 2;
+      const offsetY = (HEIGHT - frame.container.height * scale) / 2;
 
-      // Letterbox rather than crop: a slide with its edges cut off is worse
-      // than a slide with a margin.
-      const scale = Math.min(WIDTH / w, HEIGHT / h);
-      const dw = w * scale;
-      const dh = h * scale;
-      try {
-        ctx.drawImage(element, (WIDTH - dw) / 2, (HEIGHT - dh) / 2, dw, dh);
-      } catch {
-        // A frame that is not ready yet; the next one will be.
+      for (const { element, rect } of frame.items) {
+        const w =
+          element instanceof HTMLVideoElement
+            ? element.videoWidth
+            : element instanceof HTMLCanvasElement
+              ? element.width
+              : element.naturalWidth;
+        const h =
+          element instanceof HTMLVideoElement
+            ? element.videoHeight
+            : element instanceof HTMLCanvasElement
+              ? element.height
+              : element.naturalHeight;
+        if (!w || !h || rect.width <= 0 || rect.height <= 0) continue;
+
+        // Letterbox rather than crop, inside the element's own box: a slide
+        // with its edges cut off is worse than a slide with a margin.
+        const itemScale = Math.min(rect.width / w, rect.height / h);
+        const dw = w * itemScale;
+        const dh = h * itemScale;
+        const x = offsetX + (rect.left - frame.container.left) * scale + (rect.width * scale - dw) / 2;
+        const y = offsetY + (rect.top - frame.container.top) * scale + (rect.height * scale - dh) / 2;
+        try {
+          ctx.drawImage(element, x, y, dw, dh);
+        } catch {
+          // A frame that is not ready yet; the next one will be.
+        }
       }
     };
     draw();

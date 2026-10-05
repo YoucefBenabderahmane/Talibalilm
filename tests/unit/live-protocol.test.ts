@@ -53,6 +53,16 @@ describe('decodeMessage — everything on the wire is another browser’s word',
       boardOnStage: true,
     });
     expect(round({ t: 'focus', tab: 'chat' })).toEqual({ t: 'focus', tab: 'chat' });
+    expect(round({ t: 'focus', tab: 'slides', sharePip: true })).toEqual({
+      t: 'focus',
+      tab: 'slides',
+      sharePip: true,
+    });
+    expect(round({ t: 'focus', tab: 'slides', sharePip: false })).toEqual({
+      t: 'focus',
+      tab: 'slides',
+      sharePip: false,
+    });
     expect(round({ t: 'ended' })).toEqual({ t: 'ended' });
   });
 
@@ -107,6 +117,11 @@ describe('decodeMessage — everything on the wire is another browser’s word',
     expect(
       decodeMessage(
         encodeMessage({ t: 'focus', tab: 'board', boardOnStage: 'yes' } as unknown as RoomMessage),
+      ),
+    ).toBeNull();
+    expect(
+      decodeMessage(
+        encodeMessage({ t: 'focus', tab: 'slides', sharePip: 'yes' } as unknown as RoomMessage),
       ),
     ).toBeNull();
   });
