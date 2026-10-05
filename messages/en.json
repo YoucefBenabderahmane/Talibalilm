@@ -1380,6 +1380,7 @@
     "slidesNoneHost": "No slides yet.",
     "slidesUploading": "{count, plural, one {Uploading…} other {Uploading # images…}}",
     "startRecording": "Record",
+    "startingRecording": "Starting…",
     "stopRecording": "Stop recording",
     "stopShare": "Stop sharing",
     "tabBoard": "Board",

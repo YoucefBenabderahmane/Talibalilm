@@ -20,7 +20,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  * school puts it on YouTube or Drive themselves and pastes the link onto the
  * lesson — the workflow they already had.
  */
-export type RecorderState = 'idle' | 'recording' | 'paused' | 'saving';
+export type RecorderState = 'idle' | 'starting' | 'recording' | 'paused' | 'saving';
 
 export interface RecordSources {
   /** The element filling the stage right now: a video, or a slide image. */
@@ -114,6 +114,10 @@ export function useRecorder(fileBaseName: string, sources: RecordSources): Recor
     const destination = context.createMediaStreamDestination();
     audioRef.current = { context, destination };
 
+    // Acknowledged before the first await: `getUserMedia` can take a moment,
+    // and a button that shows nothing while a deck is converting reads as
+    // broken rather than busy.
+    setState('starting');
     try {
       micRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
@@ -175,6 +179,7 @@ export function useRecorder(fileBaseName: string, sources: RecordSources): Recor
       clearInterval(rewire);
       cleanup();
       setError('unsupported');
+      setState('idle');
       return;
     }
 
@@ -207,8 +212,15 @@ export function useRecorder(fileBaseName: string, sources: RecordSources): Recor
     };
 
     recorderRef.current = recorder;
-    // Chunks as it goes, so a crash costs seconds rather than the whole lesson.
-    recorder.start(5_000);
+    try {
+      // Chunks as it goes, so a crash costs seconds rather than the whole lesson.
+      recorder.start(5_000);
+    } catch {
+      cleanup();
+      setError('unsupported');
+      setState('idle');
+      return;
+    }
     setState('recording');
     setSeconds(0);
     tickRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
