@@ -193,13 +193,195 @@ export interface PdfPageOptions {
   onPage: (page: PdfPage) => void | Promise<void>;
 }
 
+/** One page as it comes back from a worker. */
+interface PoolPage {
+  blob: Blob;
+  name: string;
+}
+
+interface PoolWorker {
+  open(bytes: ArrayBuffer, baseName: string): Promise<number>;
+  render(page: number, width: number): Promise<PoolPage | null>;
+  close(): void;
+  terminate(): void;
+}
+
+type WorkerReply =
+  | { type: 'ready'; id: number; pages: number }
+  | { type: 'rendered'; id: number; page: number; blob: Blob; name: string }
+  | { type: 'failed'; id: number; page: number }
+  | { type: 'error'; id: number; detail: string };
+
+/**
+ * One worker, addressed by request id.
+ *
+ * Every call gets a promise; a worker that dies rejects whatever it was holding
+ * rather than leaving the deck waiting on a reply that will never come.
+ */
+function spawnPoolWorker(): PoolWorker {
+  const worker = new Worker(new URL('./pdf-render.worker.ts', import.meta.url), {
+    type: 'module',
+  });
+  let nextId = 0;
+  const pending = new Map<
+    number,
+    { resolve: (reply: WorkerReply) => void; reject: (error: Error) => void }
+  >();
+
+  const fail = (error: Error) => {
+    for (const entry of pending.values()) entry.reject(error);
+    pending.clear();
+  };
+
+  worker.onmessage = (event: MessageEvent<WorkerReply>) => {
+    const entry = pending.get(event.data.id);
+    if (!entry) return;
+    pending.delete(event.data.id);
+    if (event.data.type === 'error') entry.reject(new Error(event.data.detail));
+    else entry.resolve(event.data);
+  };
+  worker.onerror = (event) => fail(new Error(event.message || 'the pdf worker failed'));
+
+  const call = (message: Record<string, unknown>, transfer?: Transferable[]) =>
+    new Promise<WorkerReply>((resolve, reject) => {
+      const id = ++nextId;
+      pending.set(id, { resolve, reject });
+      worker.postMessage({ ...message, id }, transfer ?? []);
+    });
+
+  return {
+    async open(bytes, name) {
+      const reply = await call({ type: 'open', bytes, baseName: name }, [bytes]);
+      if (reply.type !== 'ready') throw new Error('unexpected worker reply');
+      return reply.pages;
+    },
+    async render(page, width) {
+      const reply = await call({ type: 'render', page, width });
+      if (reply.type === 'rendered') return { blob: reply.blob, name: reply.name };
+      if (reply.type === 'failed') return null;
+      throw new Error('unexpected worker reply');
+    },
+    close: () => {
+      worker.postMessage({ type: 'close', id: ++nextId });
+    },
+    terminate: () => worker.terminate(),
+  };
+}
+
+/**
+ * The deck, dealt to a pool of workers.
+ *
+ * Each worker asks for the next page when it is free, so one slow page does not
+ * hold a fast one behind it; the reorder buffer still guarantees the deck comes
+ * out 1, 2, 3. Uploads are awaited inside the loop, which is the backpressure —
+ * a worker waits for the pages behind it to land rather than turning a whole
+ * deck into memory at once.
+ */
+class PdfWorkerPool {
+  /** Pages actually handed to the caller — the number a fallback must respect. */
+  delivered = 0;
+  private readonly workers: PoolWorker[] = [];
+
+  constructor(
+    private readonly file: File,
+    private readonly options: PdfPageOptions,
+  ) {}
+
+  dispose(): void {
+    for (const worker of this.workers) worker.terminate();
+  }
+
+  async run(): Promise<number> {
+    const cores = typeof navigator === 'undefined' ? 4 : (navigator.hardwareConcurrency ?? 4);
+    const source = new Uint8Array(await this.file.arrayBuffer());
+    // The PDF's own name, without the extension: `deck.pdf` becomes `deck-01`,
+    // the same as the main-thread path produces.
+    const baseName = this.file.name.replace(/\.pdf$/i, '');
+
+    const first = this.spawn();
+    const documentPages = await first.open(source.slice().buffer, baseName);
+    const total = Math.min(documentPages, this.options.maxPages ?? 500);
+    if (total === 0) throw new PdfError('empty', 'no pages');
+
+    const width = pdfTargetWidth(total);
+    const wanted = pdfWorkerCount(cores, this.file.size, total);
+    const rest = Array.from({ length: wanted - 1 }, () => this.spawn());
+    await Promise.all(rest.map((worker) => worker.open(source.slice().buffer, baseName)));
+    const workers = [first, ...rest];
+
+    let next = 1;
+    let completed = 0;
+    const reorder = new PageReorder<{ page: number; file: File }>();
+    let emitChain: Promise<void> = Promise.resolve();
+
+    const emit = (page: number, file: File): Promise<void> => {
+      emitChain = emitChain.then(async () => {
+        await this.options.onPage({ file, page, pages: total });
+        this.delivered += 1;
+      });
+      return emitChain;
+    };
+
+    const drive = async (worker: PoolWorker): Promise<void> => {
+      for (;;) {
+        if (next > total) {
+          worker.close();
+          return;
+        }
+        const page = next;
+        next += 1;
+        const rendered = await worker.render(page, width);
+        completed += 1;
+        this.options.onProgress?.({ page: completed, pages: total });
+        if (rendered) {
+          const file = new File([rendered.blob], rendered.name, { type: rendered.blob.type });
+          for (const item of reorder.push(page, { page, file })) await emit(item.page, item.file);
+        } else {
+          for (const item of reorder.skip(page)) await emit(item.page, item.file);
+        }
+      }
+    };
+
+    await Promise.all(workers.map(drive));
+    await emitChain;
+    return this.delivered;
+  }
+
+  private spawn(): PoolWorker {
+    const worker = spawnPoolWorker();
+    this.workers.push(worker);
+    return worker;
+  }
+}
+
 /**
  * Render a PDF, one page at a time, handing each page over as it exists.
  *
  * Resolves with how many pages were delivered. The canvas is discarded before
  * the next page starts, so memory holds a page or two rather than a deck.
+ *
+ * The worker pool goes first: it is the only path that leaves the room's thread
+ * free while a deck converts. Anything it cannot do — a browser without module
+ * workers or OffscreenCanvas, a PDF that only the main-thread engines can open —
+ * falls through to the engines below, unchanged. A failure after pages have
+ * already been handed over is not retried: the deck and its catalogue are
+ * written from what `onPage` delivered, and rendering a page twice would
+ * register it twice.
  */
 export async function pdfPages(file: File, options: PdfPageOptions): Promise<number> {
+  if (typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined') {
+    const pool = new PdfWorkerPool(file, options);
+    try {
+      return await pool.run();
+    } catch (thrown) {
+      if (pool.delivered > 0) {
+        throw thrown instanceof PdfError ? thrown : new PdfError('engine', describe(thrown));
+      }
+    } finally {
+      pool.dispose();
+    }
+  }
+
   let lastError: unknown = null;
 
   for (const engine of ENGINES) {

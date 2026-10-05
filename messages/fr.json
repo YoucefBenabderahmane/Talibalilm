@@ -1380,6 +1380,7 @@
     "slidesNoneHost": "Aucune diapositive pour le moment.",
     "slidesUploading": "{count, plural, one {Envoi…} other {Envoi de # images…}}",
     "startRecording": "Enregistrer",
+    "startingRecording": "Démarrage…",
     "stopRecording": "Arrêter l’enregistrement",
     "stopShare": "Arrêter le partage",
     "tabBoard": "Tableau",

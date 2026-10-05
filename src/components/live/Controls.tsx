@@ -4,6 +4,7 @@ import { useTranslations } from 'next-intl';
 import {
   Circle,
   Hand,
+  Loader2,
   LogOut,
   Mic,
   MicOff,
@@ -57,7 +58,7 @@ export function Controls({
   canMic: boolean;
   canCam: boolean;
   canShare: boolean;
-  recording: 'idle' | 'recording' | 'paused' | 'saving';
+  recording: 'idle' | 'starting' | 'recording' | 'paused' | 'saving';
   onMic: () => void;
   onCam: () => void;
   onShare: () => void;
@@ -149,16 +150,24 @@ export function Controls({
         <>
           <span className="mx-1 hidden h-6 w-px bg-white/15 sm:block" aria-hidden="true" />
 
-          {recording === 'idle' || recording === 'saving' ? (
+          {recording === 'idle' || recording === 'saving' || recording === 'starting' ? (
             <button
               type="button"
               onClick={onRecord}
-              disabled={recording === 'saving'}
+              disabled={recording !== 'idle'}
               className={cn(base, quiet)}
             >
-              <Circle className="size-3.5 fill-red-500 text-red-500" aria-hidden="true" />
+              {recording === 'idle' ? (
+                <Circle className="size-3.5 fill-red-500 text-red-500" aria-hidden="true" />
+              ) : (
+                <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+              )}
               <span className="hidden sm:inline">
-                {recording === 'saving' ? t('saving') : t('startRecording')}
+                {recording === 'saving'
+                  ? t('saving')
+                  : recording === 'starting'
+                    ? t('startingRecording')
+                    : t('startRecording')}
               </span>
             </button>
           ) : (
