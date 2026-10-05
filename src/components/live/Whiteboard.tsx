@@ -379,6 +379,7 @@ export function Whiteboard({
       <div className="relative min-h-0 flex-1">
         <canvas
           ref={canvasRef}
+          data-record="main"
           onPointerDown={down}
           onPointerMove={move}
           onPointerUp={up}

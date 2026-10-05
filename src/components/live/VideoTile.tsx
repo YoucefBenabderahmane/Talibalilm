@@ -23,11 +23,18 @@ export function VideoTile({
   person,
   source = Track.Source.Camera,
   className,
+  record,
 }: {
   participant: Participant;
   person: RoomPerson;
   source?: Track.Source;
   className?: string;
+  /**
+   * Marks this tile as part of the recording. `main` is what the lesson is on;
+   * `pip` is the reduced share in the corner. The recorder composites every
+   * marker, so the file shows what the class saw.
+   */
+  record?: 'main' | 'pip';
 }) {
   const t = useTranslations('live');
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -71,6 +78,7 @@ export function VideoTile({
         autoPlay
         playsInline
         muted={person.isLocal}
+        data-record={record}
         className={cn(
           'size-full',
           // A shared screen is letterboxed, never cropped: `object-cover` cut

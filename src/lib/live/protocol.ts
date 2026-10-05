@@ -65,11 +65,17 @@ export type RoomMessage =
    */
   | { t: 'deck' }
   /**
-   * Where the teacher is looking, so the class follows: the panel tab, and
-   * whether the board is on the main stage. A student may look elsewhere
-   * between these — it only moves when the teacher does.
+   * Where the teacher is looking, so the class follows: the panel tab, whether
+   * the board is on the main stage, and whether a running screen share has been
+   * reduced to the corner. A student may look elsewhere between these — it only
+   * moves when the teacher does.
    */
-  | { t: 'focus'; tab: 'chat' | 'people' | 'board' | 'slides'; boardOnStage?: boolean }
+  | {
+      t: 'focus';
+      tab: 'chat' | 'people' | 'board' | 'slides';
+      boardOnStage?: boolean;
+      sharePip?: boolean;
+    }
   | { t: 'ended' };
 
 export type RoomMessageKind = RoomMessage['t'];
@@ -159,9 +165,14 @@ export function decodeMessage(payload: Uint8Array): RoomMessage | null {
         if (tab !== 'chat' && tab !== 'people' && tab !== 'board' && tab !== 'slides') return null;
         const boardOnStage = (parsed as { boardOnStage?: unknown }).boardOnStage;
         if (boardOnStage !== undefined && typeof boardOnStage !== 'boolean') return null;
-        return boardOnStage === undefined
-          ? { t: 'focus', tab }
-          : { t: 'focus', tab, boardOnStage };
+        const sharePip = (parsed as { sharePip?: unknown }).sharePip;
+        if (sharePip !== undefined && typeof sharePip !== 'boolean') return null;
+        return {
+          t: 'focus',
+          tab,
+          ...(boardOnStage === undefined ? {} : { boardOnStage }),
+          ...(sharePip === undefined ? {} : { sharePip }),
+        };
       }
       case 'ended':
         return { t: 'ended' };

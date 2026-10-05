@@ -6,6 +6,7 @@ import { ChevronLeft, ChevronRight, Loader2, Maximize2, Minimize2 } from 'lucide
 import { Track, type Participant, type Room } from 'livekit-client';
 import { cn } from '@/lib/utils';
 import { clampPan, nextZoom } from '@/lib/live/zoom';
+import { SharePip } from './SharePip';
 import { VideoTile } from './VideoTile';
 import type { RoomPerson } from './useRoom';
 
@@ -30,6 +31,9 @@ export function Stage({
   slideIndex,
   slideTotal,
   onGoSlide,
+  sharePip,
+  onMinimizeShare,
+  onExpandShare,
 }: {
   room: Room;
   people: RoomPerson[];
@@ -42,7 +46,12 @@ export function Stage({
   slideIndex: number;
   slideTotal: number;
   onGoSlide: (index: number) => void;
+  /** True when a running share is reduced to the corner rather than on stage. */
+  sharePip: boolean;
+  onMinimizeShare: () => void;
+  onExpandShare: () => void;
 }) {
+  const t = useTranslations('live');
   const byIdentity = (identity: string): Participant | undefined =>
     identity === room.localParticipant.identity
       ? room.localParticipant
@@ -50,7 +59,10 @@ export function Stage({
 
   const host = people.find((p) => p.isHost);
   const sharer = presenting ? people.find((p) => p.identity === presenting) : undefined;
-  const focusIsShare = Boolean(sharer);
+  // One content at a time: the share owns the stage only while it has not been
+  // reduced. Reduced, the slide (or the teacher) takes it and the share keeps
+  // running in the corner.
+  const focusIsShare = Boolean(sharer) && !sharePip;
 
   // The strip: cameras on first. The sharer keeps their own camera here —
   // sharing a screen must not make the teacher vanish from their own class.
@@ -61,7 +73,10 @@ export function Stage({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
-      <div className="relative min-h-0 flex-1 overflow-hidden rounded-2xl bg-black/30">
+      <div
+        data-record-container
+        className="relative min-h-0 flex-1 overflow-hidden rounded-2xl bg-black/30"
+      >
         {slide && !focusIsShare ? (
           <SlideStage
             src={slide}
@@ -77,29 +92,59 @@ export function Stage({
           <div className="flex size-full items-center justify-center">
             <Loader2 className="size-6 animate-spin text-white/40" aria-hidden="true" />
           </div>
-        ) : sharer ? (
+        ) : sharer && !sharePip ? (
           (() => {
             const p = byIdentity(sharer.identity);
             return p ? (
-              <VideoTile
-                participant={p}
-                person={sharer}
-                source={Track.Source.ScreenShare}
-                className="size-full rounded-2xl ring-0"
-              />
+              <>
+                <VideoTile
+                  participant={p}
+                  person={sharer}
+                  source={Track.Source.ScreenShare}
+                  record="main"
+                  className="size-full rounded-2xl ring-0"
+                />
+                {canPresent && (
+                  <button
+                    type="button"
+                    onClick={onMinimizeShare}
+                    title={t('shareMinimize')}
+                    className="absolute end-3 top-3 rounded-full bg-ink/75 p-2 text-white/80 transition-colors hover:text-white"
+                  >
+                    <Minimize2 className="size-4" aria-hidden="true" />
+                    <span className="sr-only">{t('shareMinimize')}</span>
+                  </button>
+                )}
+              </>
             ) : null;
           })()
         ) : host ? (
           (() => {
             const p = byIdentity(host.identity);
             return p ? (
-              <VideoTile participant={p} person={host} className="size-full rounded-2xl ring-0" />
+              <VideoTile
+                participant={p}
+                person={host}
+                record="main"
+                className="size-full rounded-2xl ring-0"
+              />
             ) : null;
           })()
         ) : (
           <div className="flex size-full items-center justify-center px-6 text-center">
             <p className="max-w-xs text-sm text-white/50">…</p>
           </div>
+        )}
+
+        {/* The reduced share, over whatever took the stage. Its own expand
+            button puts it back — replacing the slide, not stacking on it. */}
+        {sharer && sharePip && (
+          <SharePip
+            room={room}
+            person={sharer}
+            canExpand={canPresent}
+            onExpand={onExpandShare}
+          />
         )}
       </div>
 
@@ -316,6 +361,7 @@ function SlideStage({
           src={src}
           alt=""
           draggable={false}
+          data-record="main"
           className="size-full object-contain select-none"
           style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
         />
