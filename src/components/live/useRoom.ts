@@ -13,6 +13,7 @@ import {
   type RemoteParticipant,
 } from 'livekit-client';
 import { TrackSource as ProtoTrackSource } from '@livekit/protocol';
+import { newlyAllowed, type RoomAbilities } from '@/lib/live/abilities';
 import {
   acceptFrom,
   decodeMessage,
@@ -63,13 +64,6 @@ interface Options {
   /** Decided by the server and passed down; the UI never infers it. */
   isHost: boolean;
   onMessage?: (message: RoomMessage, fromHost: boolean) => void;
-}
-
-/** What the media server currently accepts from this viewer. */
-export interface RoomAbilities {
-  mic: boolean;
-  camera: boolean;
-  screen: boolean;
 }
 
 export function useRoom({ roomToken, isHost, onMessage }: Options) {
@@ -149,6 +143,26 @@ export function useRoom({ roomToken, isHost, onMessage }: Options) {
       })),
     );
   }, [room]);
+
+  /**
+   * The teacher's click should be felt, not just permitted.
+   *
+   * When a permission arrives mid-lesson — the false -> true edge — the
+   * microphone and the camera start by themselves: the student raised a hand,
+   * the teacher answered, and making them hunt for their own buttons afterwards
+   * is the delay the approval was meant to remove. Joining a room where they
+   * were already allowed auto-starts nothing, because nobody asked.
+   */
+  const previousAbilities = useRef<RoomAbilities | null>(null);
+  useEffect(() => {
+    const previous = previousAbilities.current;
+    previousAbilities.current = abilities;
+    const granted = newlyAllowed(previous, abilities);
+    // A browser that refuses the device is not a failure: the button stays and
+    // the student can still start it by hand.
+    if (granted.mic) void room.localParticipant.setMicrophoneEnabled(true).catch(() => {});
+    if (granted.camera) void room.localParticipant.setCameraEnabled(true).catch(() => {});
+  }, [abilities, room]);
 
   useEffect(() => {
     let cancelled = false;
