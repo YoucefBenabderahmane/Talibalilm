@@ -696,7 +696,10 @@ export function Classroom({
 
   return (
     <div
-      className="relative flex h-dvh flex-col bg-ink text-white"
+      // `overflow-hidden` is the room's promise that it is the whole page: the
+      // class fills the viewport, and a long unbroken word in the chat must
+      // never turn the white body behind it into a scrollable margin.
+      className="relative flex h-dvh flex-col overflow-hidden bg-ink text-white"
       onDragOver={(event) => {
         if (!event.dataTransfer.types.includes('Files')) return;
         // Swallowed for everyone, so a dropped file never navigates a student
@@ -871,7 +874,10 @@ export function Classroom({
             } as React.CSSProperties
           }
           className={cn(
-            'flex flex-col border-white/10 bg-black/25',
+            // `min-w-0` so a long unbreakable word in a chat line cannot force
+            // the panel past its width and drag the whole room wider than the
+            // viewport; `break-words` only bites once the box is constrained.
+            'flex min-w-0 flex-col border-white/10 bg-black/25',
             // On a phone it is a sheet over the stage, tall enough to read a
             // chat and shallow enough to keep the lesson in sight.
             'max-lg:fixed max-lg:inset-x-0 max-lg:bottom-0 max-lg:z-40 max-lg:max-h-[70dvh] max-lg:rounded-t-2xl max-lg:border-t max-lg:bg-ink/95 max-lg:pb-[var(--foot)]',
