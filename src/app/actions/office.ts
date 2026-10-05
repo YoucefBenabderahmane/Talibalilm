@@ -1,6 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { after } from 'next/server';
 import { z } from 'zod';
 import { createClient, createAdminClient } from '@/lib/supabase/server';
 import { supabaseConfigured } from '@/lib/env';
@@ -282,12 +283,14 @@ export async function correctOrder(_prev: AdminState, formData: FormData): Promi
  * The RPC is the control and the audit: it checks `is_admin()`, records who
  * decided and when, and returns the student's e-mail only when something
  * actually changed — so a second press cannot send a second message. The two
- * e-mails below are the loop closing: the student learns they can enrol, and
- * the office keeps a copy in its own mailbox.
+ * e-mails are the loop closing: the student learns they can enrol, and the
+ * office keeps a copy in its own mailbox.
  *
- * Nothing here is allowed to fail the decision. The approval is already
- * committed when the mail is attempted; a mail server that is down must not
- * leave the admin believing nothing happened.
+ * Nothing here is allowed to fail the decision, and nothing here may delay it
+ * either. The decision is committed by the RPC above; the profile read and the
+ * two SMTP connections are side effects, and holding the admin's button open
+ * for them is how approving a registration came to feel broken. They run in
+ * `after()`, once the response is on its way.
  */
 async function applyApproval(userId: string, approve: boolean): Promise<AdminState> {
   const supabase = await admin();
@@ -299,42 +302,44 @@ async function applyApproval(userId: string, approve: boolean): Promise<AdminSta
 
   // Null means it was already in that state — nothing to announce.
   if (email) {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('full_name, locale')
-      .eq('id', userId)
-      .maybeSingle();
-    const fullName = profile?.full_name ?? '';
+    after(async () => {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('full_name, locale')
+        .eq('id', userId)
+        .maybeSingle();
+      const fullName = profile?.full_name ?? '';
 
-    // Only an approval is good news. Sending "your registration is approved"
-    // to somebody who was just put back in the queue was worse than silence.
-    if (approve) {
+      // Only an approval is good news. Sending "your registration is approved"
+      // to somebody who was just put back in the queue was worse than silence.
+      if (approve) {
+        try {
+          await sendMail(
+            studentApproved({
+              to: email,
+              fullName,
+              locale: profile?.locale ?? 'fr',
+              spaceUrl: `${siteUrl()}/dashboard`,
+            }),
+          );
+        } catch (cause) {
+          reportError('approval.student.mail', cause, { userId });
+        }
+      }
+
       try {
         await sendMail(
-          studentApproved({
-            to: email,
+          officeApprovalNotice({
+            to: officeInbox(institut.email),
             fullName,
-            locale: profile?.locale ?? 'fr',
-            spaceUrl: `${siteUrl()}/dashboard`,
+            email,
+            approved: approve,
           }),
         );
       } catch (cause) {
-        reportError('approval.student.mail', cause, { userId });
+        reportError('approval.office.mail', cause, { userId });
       }
-    }
-
-    try {
-      await sendMail(
-        officeApprovalNotice({
-          to: officeInbox(institut.email),
-          fullName,
-          email,
-          approved: approve,
-        }),
-      );
-    } catch (cause) {
-      reportError('approval.office.mail', cause, { userId });
-    }
+    });
   }
 
   return OK;
