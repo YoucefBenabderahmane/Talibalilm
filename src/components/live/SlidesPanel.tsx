@@ -56,7 +56,7 @@ export function SlidesPanel({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
-  const { busy, converting, error, detail, skipped, upload: uploadFiles } = upload;
+  const { busy, converting, error, detail, skipped, notice, upload: uploadFiles } = upload;
 
   const remove = async (slide: { id: string }) => {
     if (!window.confirm(t('slideRemoveConfirm'))) return;
@@ -136,6 +136,18 @@ export function SlidesPanel({
       {skipped > 0 && (
         <p role="status" className="px-3 pb-1.5 text-center text-[11px] leading-relaxed text-gold-200">
           {t('slidesSkipped', { count: skipped })}
+        </p>
+      )}
+
+      {/* Which path the conversion ran on, when it was not the fast one. The
+          sentence is raw and diagnostic on purpose: an admin screen must show
+          the cause, not a guess about it. */}
+      {notice && (
+        <p
+          role="status"
+          className="px-3 pb-1.5 text-center text-[11px] leading-relaxed text-gold-200/80"
+        >
+          {notice}
         </p>
       )}
 

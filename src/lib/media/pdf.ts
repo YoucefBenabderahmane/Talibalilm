@@ -182,6 +182,20 @@ export interface PdfPageOptions {
   maxPages?: number;
   onProgress?: (progress: PdfProgress) => void;
   /**
+   * True while the room is recording or the teacher is presenting.
+   *
+   * The pool then keeps to two workers instead of half the cores: the
+   * conversion is the only thing here that can be late, and a recorder that
+   * drops frames is the thing nobody can redo.
+   */
+  lowPriority?: boolean;
+  /**
+   * Called when the worker pool could not be used and the conversion moved to
+   * the room's own thread. The room shows it; nobody should have to guess
+   * which path ran, which is how a silent fallback went unnoticed for a week.
+   */
+  onFallback?: (reason: string) => void;
+  /**
    * Each page as it is rendered, in order.
    *
    * Not a `File[]` on purpose. A hundred-page deck held as PNGs is hundreds of
@@ -200,7 +214,14 @@ interface PoolPage {
 }
 
 interface PoolWorker {
-  open(bytes: ArrayBuffer, baseName: string): Promise<number>;
+  /**
+   * The File itself, not its bytes.
+   *
+   * A File is shared with the worker rather than copied, so the room's thread
+   * never allocates a second copy of a two-hundred-megabyte document — the
+   * worker reads its own bytes on its own thread.
+   */
+  open(file: File, baseName: string): Promise<number>;
   render(page: number, width: number): Promise<PoolPage | null>;
   close(): void;
   terminate(): void;
@@ -281,8 +302,8 @@ function spawnPoolWorker(): PoolWorker {
     });
 
   return {
-    async open(bytes, name) {
-      const reply = await call({ type: 'open', bytes, baseName: name }, [bytes], OPEN_DEADLINE_MS);
+    async open(file, name) {
+      const reply = await call({ type: 'open', file, baseName: name }, [], OPEN_DEADLINE_MS);
       if (reply.type !== 'ready') throw new Error('unexpected worker reply');
       return reply.pages;
     },
@@ -324,20 +345,22 @@ class PdfWorkerPool {
 
   async run(): Promise<number> {
     const cores = typeof navigator === 'undefined' ? 4 : (navigator.hardwareConcurrency ?? 4);
-    const source = new Uint8Array(await this.file.arrayBuffer());
     // The PDF's own name, without the extension: `deck.pdf` becomes `deck-01`,
     // the same as the main-thread path produces.
     const baseName = this.file.name.replace(/\.pdf$/i, '');
 
     const first = this.spawn();
-    const documentPages = await first.open(source.slice().buffer, baseName);
+    const documentPages = await first.open(this.file, baseName);
     const total = Math.min(documentPages, this.options.maxPages ?? 500);
     if (total === 0) throw new PdfError('empty', 'no pages');
 
     const width = pdfTargetWidth(total);
-    const wanted = pdfWorkerCount(cores, this.file.size, total);
+    const byMachine = pdfWorkerCount(cores, this.file.size, total);
+    // Half the pool while the teacher is recording (or presenting): the file
+    // and the class may wait a little, the recording may not.
+    const wanted = this.options.lowPriority ? Math.min(byMachine, 2) : byMachine;
     const rest = Array.from({ length: wanted - 1 }, () => this.spawn());
-    await Promise.all(rest.map((worker) => worker.open(source.slice().buffer, baseName)));
+    await Promise.all(rest.map((worker) => worker.open(this.file, baseName)));
     const workers = [first, ...rest];
 
     let next = 1;
@@ -408,9 +431,17 @@ export async function pdfPages(file: File, options: PdfPageOptions): Promise<num
       if (pool.delivered > 0) {
         throw thrown instanceof PdfError ? thrown : new PdfError('engine', describe(thrown));
       }
+      // Nothing reached the caller, so the engines below can still do the
+      // work — but on the room's own thread. Say so: a silent fallback is how
+      // a week went by without anyone knowing which path was running.
+      const reason = describe(thrown);
+      console.warn('[pdf] worker pool unavailable, converting on the main thread:', reason);
+      options.onFallback?.(reason);
     } finally {
       pool.dispose();
     }
+  } else {
+    options.onFallback?.('module workers or OffscreenCanvas are not available in this browser');
   }
 
   let lastError: unknown = null;
@@ -455,44 +486,21 @@ async function renderDeck(
 
   const width = pdfTargetWidth(pages);
   const baseName = file.name.replace(/\.pdf$/i, '');
-  const wanted = pdfWorkerCount(
-    typeof navigator === 'undefined' ? 4 : (navigator.hardwareConcurrency ?? 4),
-    file.size,
-    pages,
-  );
-
-  const extras: OpenedDocument[] = [];
-  if (wanted > 1 && primary.worker) {
-    // Each extra worker needs its own document, and therefore its own copy of
-    // the file — the primary's copy went to its worker.
-    const spare = new Uint8Array(await file.arrayBuffer());
-    for (let i = 1; i < wanted; i += 1) {
-      const worker = makeWorker(engine.workerUrl());
-      if (!worker) break;
-      try {
-        extras.push(await openWithWorker(pdfjs, spare.slice(), worker));
-      } catch {
-        worker.terminate();
-        break;
-      }
-    }
-  }
-
-  const documents = [primary, ...extras];
   let delivered = 0;
 
+  // One page at a time, and the room gets a turn between each. This is the
+  // fallback — a browser that cannot give us a worker — and it runs on the
+  // thread the class is using: four parallel renders here is what made the
+  // record button look dead. Slower, and the lesson survives it.
   try {
-    if (documents.length === 1) {
-      for (let n = 1; n <= pages; n += 1) {
-        options.onProgress?.({ page: n, pages });
-        const rendered = await renderPage(primary.document_, n, width, baseName);
-        if (rendered) {
-          await options.onPage({ file: rendered, page: n, pages });
-          delivered += 1;
-        }
+    for (let n = 1; n <= pages; n += 1) {
+      options.onProgress?.({ page: n, pages });
+      const rendered = await renderPage(primary.document_, n, width, baseName);
+      if (rendered) {
+        await options.onPage({ file: rendered, page: n, pages });
+        delivered += 1;
       }
-    } else {
-      delivered = await renderParallel(documents, pages, width, baseName, options);
+      await yieldToBrowser();
     }
   } catch (thrown) {
     if (thrown instanceof PdfError) throw thrown;
@@ -500,80 +508,30 @@ async function renderDeck(
   } finally {
     // The loading task, not the document: `destroy()` is what shuts a worker
     // down, and one left running per upload accumulates.
-    await Promise.all(documents.map((doc) => doc.task.destroy().catch(() => {})));
+    await primary.task.destroy().catch(() => {});
   }
 
   return delivered;
 }
 
 /**
- * Pages dealt to the pool, released in order.
+ * Give the room's thread a turn.
  *
- * Awaiting the emission chain is the backpressure: a worker that has finished
- * a page waits for the uploads behind it rather than filling memory with
- * finished images. Progress is reported as pages completed, which is
- * monotonic even though the pages themselves finish out of order.
+ * `scheduler.yield` where the browser has it — it resumes ahead of timers, so
+ * a click is handled before the next page rather than behind a queue of them.
+ * Everywhere else a zero-delay timeout does the same job less politely.
  */
-async function renderParallel(
-  documents: OpenedDocument[],
-  pages: number,
-  width: number,
-  baseName: string,
-  options: PdfPageOptions,
-): Promise<number> {
-  const reorder = new PageReorder<{ page: number; file: File }>();
-  let next = 1;
-  let completed = 0;
-  let delivered = 0;
-  let failure: unknown = null;
-  let emitChain: Promise<void> = Promise.resolve();
-
-  const emit = (file: File, page: number): Promise<void> => {
-    emitChain = emitChain.then(async () => {
-      await options.onPage({ file, page, pages });
-      delivered += 1;
-    });
-    return emitChain;
-  };
-
-  const run = async (document_: DocumentProxy) => {
-    for (;;) {
-      if (failure) return;
-      const n = next;
-      next += 1;
-      if (n > pages) return;
-
-      try {
-        const rendered = await renderPage(document_, n, width, baseName);
-        completed += 1;
-        options.onProgress?.({ page: completed, pages });
-        if (rendered) {
-          for (const item of reorder.push(n, { page: n, file: rendered })) {
-            await emit(item.file, item.page);
-          }
-        } else {
-          // A page the browser could not encode, even retried smaller. Mark it
-          // missing so the pages behind it are released rather than held
-          // forever — the silent truncation this buffer used to cause.
-          for (const item of reorder.skip(n)) {
-            await emit(item.file, item.page);
-          }
-        }
-      } catch (thrown) {
-        failure = thrown;
-        return;
-      }
+async function yieldToBrowser(): Promise<void> {
+  const scheduler = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
+  if (scheduler?.yield) {
+    try {
+      await scheduler.yield();
+      return;
+    } catch {
+      // Fall through to the timer.
     }
-  };
-
-  await Promise.all(documents.map((doc) => run(doc.document_)));
-  await emitChain;
-
-  if (failure) {
-    if (failure instanceof PdfError) throw failure;
-    throw new PdfError('engine', describe(failure));
   }
-  return delivered;
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
 /**
