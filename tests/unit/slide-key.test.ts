@@ -2,13 +2,16 @@ import { describe, expect, it } from 'vitest';
 import {
   corsProbeKey,
   deckKey,
+  documentKey,
   isDeckKey,
+  isDocumentKeyFor,
   isSlideKeyFor,
   safeFilename,
   slideKey,
   slideName,
   CORS_PROBE_KEY_PATTERN,
   DECK_KEY_PATTERN,
+  DOCUMENT_KEY_PATTERN,
   SLIDE_KEY_PATTERN,
   VIDEO_KEY_PATTERN,
 } from '@/lib/storage/key';
@@ -83,6 +86,26 @@ describe('shared deck keys', () => {
   });
 });
 
+describe('lesson document keys', () => {
+  it('files a document under its own lesson', () => {
+    expect(documentKey(SESSION, 'abcd1234efgh')).toBe(`lesson-docs/${SESSION}/abcd1234efgh.pdf`);
+    expect(DOCUMENT_KEY_PATTERN.test(documentKey(SESSION, slideName()))).toBe(true);
+  });
+
+  it('accepts a key this lesson owns and refuses another lesson’s', () => {
+    expect(isDocumentKeyFor(`lesson-docs/${SESSION}/abcd1234efgh.pdf`, SESSION)).toBe(true);
+    expect(isDocumentKeyFor(`lesson-docs/${OTHER}/abcd1234efgh.pdf`, SESSION)).toBe(false);
+  });
+
+  it('refuses a path trick, another extension, or another prefix', () => {
+    expect(isDocumentKeyFor(`lesson-docs/${SESSION}/../../secret.pdf`, SESSION)).toBe(false);
+    expect(isDocumentKeyFor(`lesson-docs/${SESSION}/payload12.html`, SESSION)).toBe(false);
+    expect(isDocumentKeyFor(`lesson-docs/${SESSION}/abcd1234efgh.pdf.html`, SESSION)).toBe(false);
+    expect(isDocumentKeyFor(`lessons/${SESSION}/abcd1234efgh.mp4`, SESSION)).toBe(false);
+    expect(isDocumentKeyFor('lesson-docs/not-a-uuid/abcd1234efgh.pdf', 'not-a-uuid')).toBe(false);
+  });
+});
+
 describe('safeFilename', () => {
   it('keeps only the name the teacher would recognise', () => {
     expect(safeFilename('C:\\Users\\Youcef\\Desktop\\plan.png')).toBe('plan.png');
@@ -107,9 +130,10 @@ describe('safeFilename', () => {
 describe('the CORS probe key', () => {
   const key = corsProbeKey('0123456789abcdef0123456789abcdef');
 
-  it('matches neither the slide nor the video pattern', () => {
+  it('matches none of the patterns a read path trusts', () => {
     expect(SLIDE_KEY_PATTERN.test(key)).toBe(false);
     expect(VIDEO_KEY_PATTERN.test(key)).toBe(false);
+    expect(DOCUMENT_KEY_PATTERN.test(key)).toBe(false);
   });
 
   it('is recognised as one of ours, and a key we did not mint is not', () => {

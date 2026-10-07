@@ -6,6 +6,7 @@ import { CourseSettingsForm } from '@/components/admin/CourseSettingsForm';
 import { CoverUpload } from '@/components/admin/CoverUpload';
 import { GalleryUpload } from '@/components/admin/GalleryUpload';
 import { readBullets, readGallery, readHighlights } from '@/lib/content/presentation';
+import { readDocuments } from '@/lib/content/lesson-files';
 import { CourseOutline, type OutlineClassContent } from '@/components/admin/CourseOutline';
 import { PublishControls } from '@/components/admin/PublishControls';
 import { CourseSteps } from '@/components/admin/CourseSteps';
@@ -133,7 +134,9 @@ export default async function CourseBuilderPage({
   const { data: classContentRows } = lessonIds.length
     ? await supabase
         .from('class_lesson_content')
-        .select('class_id, lesson_id, content, video_id, video_provider, video_bytes, video_expires_at')
+        .select(
+          'class_id, lesson_id, content, video_id, video_provider, video_bytes, video_expires_at, attachments',
+        )
         .in('lesson_id', lessonIds)
     : { data: [] };
 
@@ -147,6 +150,7 @@ export default async function CourseBuilderPage({
       videoProvider: row.video_provider,
       videoBytes: row.video_bytes,
       videoExpiresAt: row.video_expires_at,
+      documents: readDocuments(row.attachments),
     });
     classContentByLesson.set(row.lesson_id, list);
   }
