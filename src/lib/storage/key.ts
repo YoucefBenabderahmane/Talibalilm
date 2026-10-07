@@ -107,6 +107,30 @@ export function isVideoKeyFor(key: string, lessonId: string): boolean {
 }
 
 /**
+ * Where one lesson document lives: `lesson-docs/<lesson id>/<random>.pdf`.
+ *
+ * Deliberately its own prefix rather than a second extension under `lessons/`.
+ * A document has a different reader (a card and a signed link, not a player), a
+ * different size cap and a different lifetime from a recording, and a shared
+ * prefix would blur all three the first time one of them changes.
+ *
+ * The lesson id is the prefix for the same reason as the video: a key naming
+ * another lesson's file is refused by shape before R2 is ever called, and the
+ * random name keeps a guessed lesson id from becoming a signed URL.
+ */
+export const DOCUMENT_KEY_PATTERN =
+  /^lesson-docs\/[0-9a-f-]{36}\/[A-Za-z0-9_-]{8,64}\.pdf$/;
+
+export function documentKey(lessonId: string, random: string): string {
+  return `lesson-docs/${lessonId}/${random}.pdf`;
+}
+
+/** Is this a key we issued for this lesson? */
+export function isDocumentKeyFor(key: string, lessonId: string): boolean {
+  return DOCUMENT_KEY_PATTERN.test(key) && key.startsWith(`lesson-docs/${lessonId}/`);
+}
+
+/**
  * Where the browser's own CORS test writes its eight bytes.
  *
  * `cors-probe/<random>.bin`, matching NEITHER `SLIDE_KEY_PATTERN` nor

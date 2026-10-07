@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Field } from '@/components/ui/field';
 import { LessonVideoUpload } from '@/components/admin/LessonVideoUpload';
+import { LessonPdfUpload } from '@/components/admin/LessonPdfUpload';
+import type { LessonDocument } from '@/lib/content/lesson-files';
 import { fillLessonFromVideo } from '@/app/actions/admin';
 import {
   addLesson,
@@ -33,6 +35,8 @@ export interface OutlineClassContent {
   videoProvider: string;
   videoBytes: number;
   videoExpiresAt: string | null;
+  /** The support documents the group has been given for this lesson. */
+  documents: LessonDocument[];
 }
 
 export interface OutlineLesson {
@@ -407,6 +411,17 @@ function LessonRow({
                   provider={selected?.videoProvider ?? 'none'}
                   bytes={selected?.videoBytes ?? 0}
                   expiresAt={selected?.videoExpiresAt ?? null}
+                />
+
+                {/*
+                  The written support, beside the recording of the same group.
+                  Outside the form for the same reason as the video: it uploads
+                  and saves on its own.
+                */}
+                <LessonPdfUpload
+                  lessonId={lesson.id}
+                  classId={classId}
+                  documents={selected?.documents ?? []}
                 />
 
                 <label className="block">

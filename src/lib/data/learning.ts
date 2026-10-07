@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { supabaseConfigured } from '@/lib/env';
+import { readDocuments, type LessonDocument } from '@/lib/content/lesson-files';
 import type { EntitlementRow, LessonContentRow, ProgressRow } from '@/lib/supabase/database.types';
 
 /**
@@ -17,6 +18,8 @@ export interface LessonContent {
   videoProvider: LessonContentRow['video_provider'];
   /** An opaque id, never a playable URL. Exchanged for a signed URL in Phase 5. */
   videoId: string | null;
+  /** The group's support documents, keys only — signed per reader, per request. */
+  documents: LessonDocument[];
 }
 
 /** Null when the caller may not read it — which is the same answer as "absent". */
@@ -26,7 +29,7 @@ export async function getLessonContent(lessonId: string): Promise<LessonContent 
   const supabase = await createClient();
   const { data } = await supabase
     .from('lesson_content')
-    .select('content, video_provider, video_id')
+    .select('content, video_provider, video_id, attachments')
     .eq('lesson_id', lessonId)
     .maybeSingle();
 
@@ -35,6 +38,7 @@ export async function getLessonContent(lessonId: string): Promise<LessonContent 
     content: data.content,
     videoProvider: data.video_provider,
     videoId: data.video_id,
+    documents: readDocuments(data.attachments),
   };
 }
 
@@ -55,7 +59,7 @@ export async function getClassLessonContent(
   const supabase = await createClient();
   const { data } = await supabase
     .from('class_lesson_content')
-    .select('content, video_provider, video_id')
+    .select('content, video_provider, video_id, attachments')
     .eq('lesson_id', lessonId)
     .eq('class_id', classId)
     .maybeSingle();
@@ -65,6 +69,7 @@ export async function getClassLessonContent(
     content: data.content,
     videoProvider: data.video_provider,
     videoId: data.video_id,
+    documents: readDocuments(data.attachments),
   };
 }
 

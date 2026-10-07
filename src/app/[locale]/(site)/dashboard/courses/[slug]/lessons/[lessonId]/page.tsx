@@ -2,7 +2,7 @@ import { getTranslations, setRequestLocale } from 'next-intl/server';
 import { signDownload } from '@/lib/storage/r2';
 import { notFound, redirect } from 'next/navigation';
 import type { Metadata } from 'next';
-import { CheckCircle2, Circle, Lock, PlayCircle, Users } from 'lucide-react';
+import { CheckCircle2, Circle, ExternalLink, FileText, Lock, PlayCircle, Users } from 'lucide-react';
 import { Link } from '@/i18n/navigation';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -20,6 +20,7 @@ import { currentViewer, isStaff } from '@/lib/auth/guards';
 import { supabaseConfigured } from '@/lib/env';
 import { courseLessons } from '@/lib/content/types';
 import { embedUrl, type VideoProvider } from '@/lib/content/video';
+import { formatBytes } from '@/lib/media/video';
 import { cn } from '@/lib/utils';
 import { UpcomingClasses } from '@/components/live/UpcomingClasses';
 import { requireLocale } from '@/i18n/routing';
@@ -87,6 +88,19 @@ export default async function LessonPage({
     content?.videoProvider === 'r2' && content.videoId
       ? await signDownload(content.videoId, 3600)
       : null;
+
+  // The group's support documents, each signed only after the RLS-gated read
+  // above let the row through — the same posture as the video. A document the
+  // bucket will not sign stays in the list without a link rather than
+  // disappearing, so the student knows it exists.
+  const documents = content
+    ? await Promise.all(
+        content.documents.map(async (document) => ({
+          ...document,
+          url: await signDownload(document.key, 3600),
+        })),
+      )
+    : [];
 
   if (hasAccess) await touchEnrollment(course.id, viewer.id);
 
@@ -194,6 +208,40 @@ export default async function LessonPage({
                   </div>
                 );
               })()}
+
+            {/* The written support, under the recording it belongs to. A card,
+                not an embedded viewer: Safari on iOS refuses inline PDFs, and a
+                blank frame where the lesson should be is worse than a link that
+                opens the document in its own tab. */}
+            {documents.length > 0 && (
+              <section className="mt-6 rounded-[var(--radius-card)] border border-line bg-white p-4">
+                <p className="eyebrow">{t('pdfSupport')}</p>
+                <ul className="mt-3 space-y-2">
+                  {documents.map((document) => (
+                    <li
+                      key={document.key}
+                      className="flex flex-wrap items-center gap-2 rounded-[var(--radius-input)] border border-line bg-surface/40 px-3 py-2.5"
+                    >
+                      <FileText className="size-4 shrink-0 text-ink-muted" aria-hidden="true" />
+                      <span className="min-w-0 flex-1 truncate text-[13px] text-ink">
+                        {document.filename}
+                      </span>
+                      <span className="shrink-0 text-[11px] text-ink-muted">
+                        {formatBytes(document.bytes)}
+                      </span>
+                      {document.url ? (
+                        <Button asChild size="sm" variant="outline">
+                          <a href={document.url} target="_blank" rel="noopener noreferrer">
+                            <ExternalLink className="size-3.5" aria-hidden="true" />
+                            {t('pdfOpen')}
+                          </a>
+                        </Button>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
 
             <div className="mt-6 text-[15px] leading-relaxed whitespace-pre-line text-ink-soft">
               {content.content || t('noBody')}
