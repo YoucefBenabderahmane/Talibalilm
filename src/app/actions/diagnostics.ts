@@ -61,7 +61,22 @@ export async function finishCorsProbe(input: { key: string }): Promise<AdminStat
   const object = await readObjectHead(input.key, 8);
   await deleteObject(input.key);
 
-  if (!object || object.size === 0) {
+  if (!object.ok) {
+    // "Missing" is the probe's whole point: the browser reported success and
+    // the bucket has nothing. Anything else is storage refusing to answer, and
+    // the raw reason is the evidence — not a guess dressed as one.
+    return {
+      ok: false,
+      error: 'uploadFailed',
+      detail:
+        object.reason === 'missing'
+          ? 'le navigateur n’a signalé aucune erreur mais rien n’est arrivé dans le bucket — ' +
+            'vérifiez R2_BUCKET et R2_ACCOUNT_ID'
+          : `la lecture a échoué (${object.reason}) : ${object.detail ?? 'sans détail'}`,
+    };
+  }
+
+  if (object.size === 0) {
     return {
       ok: false,
       error: 'uploadFailed',

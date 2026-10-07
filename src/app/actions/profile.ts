@@ -1,6 +1,7 @@
 'use server';
 
 import { headers } from 'next/headers';
+import { after } from 'next/server';
 import { getTranslations } from 'next-intl/server';
 import { createClient } from '@/lib/supabase/server';
 import { clientKey, rateLimit } from '@/lib/rate-limit';
@@ -189,14 +190,20 @@ export async function confirmAvatarUpload(key: string): Promise<AvatarResult> {
   if (!isAvatarKeyFor(key, user.id)) return { ok: false, error: 'notAnImage' };
 
   const head = await readObjectHead(key);
-  if (!head) {
-    await deleteObject(key);
+  if (!head.ok) {
+    // Student-facing: the raw reason goes to the log, never to the page. The
+    // cleanup is a side effect, so a slow bucket does not hold the upload.
+    after(async () => {
+      await deleteObject(key);
+    });
     return { ok: false, error: 'uploadFailed' };
   }
 
   const check = checkImage(head.head);
   if (!check.ok || head.size > MAX_IMAGE_BYTES) {
-    await deleteObject(key);
+    after(async () => {
+      await deleteObject(key);
+    });
     return { ok: false, error: check.ok ? 'tooLarge' : 'notAnImage' };
   }
 
