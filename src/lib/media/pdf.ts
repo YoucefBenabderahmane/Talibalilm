@@ -213,6 +213,18 @@ type WorkerReply =
   | { type: 'error'; id: number; detail: string };
 
 /**
+ * How long a worker may take before its call is abandoned.
+ *
+ * A worker that never answers — a page the engine cannot finish, a thread the
+ * browser quietly killed — used to leave the upload's busy counter raised
+ * forever: "Envoi…" with nothing behind it. The deadline turns that into a
+ * named failure with the page number. Opening is generous enough to cover the
+ * first parse of a very large document.
+ */
+const OPEN_DEADLINE_MS = 30_000;
+const RENDER_DEADLINE_MS = 60_000;
+
+/**
  * One worker, addressed by request id.
  *
  * Every call gets a promise; a worker that dies rejects whatever it was holding
@@ -242,21 +254,40 @@ function spawnPoolWorker(): PoolWorker {
   };
   worker.onerror = (event) => fail(new Error(event.message || 'the pdf worker failed'));
 
-  const call = (message: Record<string, unknown>, transfer?: Transferable[]) =>
+  const call = (
+    message: Record<string, unknown>,
+    transfer: Transferable[],
+    deadlineMs: number,
+  ) =>
     new Promise<WorkerReply>((resolve, reject) => {
       const id = ++nextId;
-      pending.set(id, { resolve, reject });
-      worker.postMessage({ ...message, id }, transfer ?? []);
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        reject(
+          new Error(`the pdf worker did not answer within ${Math.round(deadlineMs / 1000)}s`),
+        );
+      }, deadlineMs);
+      pending.set(id, {
+        resolve: (reply) => {
+          clearTimeout(timer);
+          resolve(reply);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      });
+      worker.postMessage({ ...message, id }, transfer);
     });
 
   return {
     async open(bytes, name) {
-      const reply = await call({ type: 'open', bytes, baseName: name }, [bytes]);
+      const reply = await call({ type: 'open', bytes, baseName: name }, [bytes], OPEN_DEADLINE_MS);
       if (reply.type !== 'ready') throw new Error('unexpected worker reply');
       return reply.pages;
     },
     async render(page, width) {
-      const reply = await call({ type: 'render', page, width });
+      const reply = await call({ type: 'render', page, width }, [], RENDER_DEADLINE_MS);
       if (reply.type === 'rendered') return { blob: reply.blob, name: reply.name };
       if (reply.type === 'failed') return null;
       throw new Error('unexpected worker reply');

@@ -70,6 +70,17 @@ export function r2Malformed(): string[] {
   return malformedR2Config(ACCOUNT, BUCKET);
 }
 
+/**
+ * One R2 round trip may take this long before it is abandoned.
+ *
+ * Without it a bucket that accepts the connection and never answers held the
+ * caller forever: an upload stalled at the page it was confirming, a removal
+ * spun on a delete that was never coming back. A deadline turns both into a
+ * named failure the screen can show. Eight seconds is far longer than any
+ * healthy HEAD, GET or DELETE of one small object.
+ */
+const R2_TIMEOUT_MS = 8_000;
+
 let client: S3Client | null = null;
 
 function s3(): S3Client {
@@ -167,26 +178,41 @@ export async function signDownload(key: string, seconds = 3600): Promise<string 
  * The length comes from the response's Content-Range (`bytes 0-15/12345`), not
  * from the browser. A presigned PUT cannot cap what is actually sent, so the
  * size that reaches the database has to be measured here rather than believed.
+ *
+ * `missing` and `failed` are two different answers on purpose. An object the
+ * bucket does not have means the upload never landed; a bucket that could not
+ * be reached — a deadline, DNS, a dropped socket — is a storage fault, and
+ * telling the office "upload failed" for it sends them to the wrong problem.
  */
-export async function readObjectHead(
-  key: string,
-  bytes = 16,
-): Promise<{ head: Uint8Array; size: number } | null> {
-  if (!r2Configured) return null;
+export type ObjectHead =
+  | { ok: true; head: Uint8Array; size: number }
+  | { ok: false; reason: 'missing' | 'failed'; detail?: string };
+
+export async function readObjectHead(key: string, bytes = 16): Promise<ObjectHead> {
+  if (!r2Configured) return { ok: false, reason: 'failed', detail: 'storage is not configured' };
   try {
     const result = await s3().send(
       new GetObjectCommand({ Bucket: BUCKET, Key: key, Range: `bytes=0-${bytes - 1}` }),
+      { abortSignal: AbortSignal.timeout(R2_TIMEOUT_MS) },
     );
     const body = await result.Body?.transformToByteArray();
-    if (!body) return null;
+    if (!body) return { ok: false, reason: 'missing' };
 
     // "bytes 0-15/12345" — the figure after the slash is the whole object.
     const total = Number(result.ContentRange?.split('/')[1]);
     const size = Number.isFinite(total) && total > 0 ? total : (result.ContentLength ?? 0);
-    return { head: new Uint8Array(body), size };
+    return { ok: true, head: new Uint8Array(body), size };
   } catch (error) {
     reportError('r2.readHead', error, { key });
-    return null;
+    const status = (error as { $metadata?: { httpStatusCode?: number } })?.$metadata
+      ?.httpStatusCode;
+    const name = (error as { name?: string })?.name;
+    const missing = name === 'NoSuchKey' || status === 404;
+    return {
+      ok: false,
+      reason: missing ? 'missing' : 'failed',
+      detail: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+    };
   }
 }
 
@@ -290,11 +316,20 @@ export async function checkCors(origin: string): Promise<CorsProbe> {
   }
 }
 
-/** Remove one object. Used when a slide is deleted, and to clean up a rejected upload. */
+/**
+ * Remove one object. Used when a slide is deleted, and to clean up a rejected
+ * upload.
+ *
+ * Bounded like the read: a delete that never answers is a caller that never
+ * answers. Deleting is idempotent in S3 — a key that is already gone asks for
+ * nothing and succeeds — so the deadline only ever fires on a genuine stall.
+ */
 export async function deleteObject(key: string): Promise<boolean> {
   if (!r2Configured) return false;
   try {
-    await s3().send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
+    await s3().send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }), {
+      abortSignal: AbortSignal.timeout(R2_TIMEOUT_MS),
+    });
     return true;
   } catch (error) {
     reportError('r2.delete', error, { key });

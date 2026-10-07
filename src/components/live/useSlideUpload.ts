@@ -11,6 +11,7 @@ import {
 } from '@/app/actions/slides';
 import { MAX_IMAGE_BYTES } from '@/lib/media/image';
 import { isDeckKey } from '@/lib/storage/key';
+import { abortAfter, withDeadline } from '@/lib/media/deadline';
 import { runPool } from '@/lib/media/pool';
 import { classifyUpload } from '@/lib/media/upload-kind';
 import { PdfError } from '@/lib/media/pdf';
@@ -77,6 +78,23 @@ const PUTS = 4;
 /** Batches queued or running before the renderer is made to wait. Bounds memory. */
 const MAX_PENDING_BATCHES = 2;
 
+/**
+ * A Server Action that has not answered within this long is abandoned.
+ *
+ * The action may still finish on the server; the upload simply stops holding
+ * the lesson open for it and says which call failed. Without this, a request
+ * the platform never completes left "Envoi…" on screen forever — the stall the
+ * teacher reported, with no error and nothing to act on.
+ */
+const ACTION_DEADLINE_MS = 30_000;
+
+/**
+ * One page PUT. Generous enough for a 5 MB page on a slow line, short enough
+ * that a connection accepted and then never answered is cut off instead of
+ * hanging the batch — and with it the whole deck — forever.
+ */
+const PUT_DEADLINE_MS = 180_000;
+
 export function useSlideUpload(
   sessionId: string,
   handlers: SlideUploadHandlers = {},
@@ -125,14 +143,18 @@ export function useSlideUpload(
        * the pages because of it.
        */
       const processBatchOnce = async (batch: QueuedPage[]) => {
-        const tickets = await requestSlideUploads({
-          sessionId,
-          pages: batch.map(({ file, fingerprint }) => ({
-            contentType: file.type,
-            byteSize: file.size,
-            fingerprint,
-          })),
-        });
+        const tickets = await withDeadline(
+          requestSlideUploads({
+            sessionId,
+            pages: batch.map(({ file, fingerprint }) => ({
+              contentType: file.type,
+              byteSize: file.size,
+              fingerprint,
+            })),
+          }),
+          ACTION_DEADLINE_MS,
+          'requesting upload tickets',
+        );
         if (!tickets.ok || !tickets.tickets || tickets.tickets.length === 0) {
           setError(tickets.error ?? 'uploadFailed');
           return;
@@ -150,13 +172,25 @@ export function useSlideUpload(
         await runPool(accepted, PUTS, async ({ file }, index) => {
           const ticket = tickets.tickets?.[index];
           if (!ticket) return;
-          try {
-            const put = await fetch(ticket.url, {
+
+          const put = () =>
+            fetch(ticket.url, {
               method: 'PUT',
               body: file,
               headers: { 'Content-Type': ticket.contentType },
+              signal: abortAfter(PUT_DEADLINE_MS),
+            }).then((response) => {
+              if (!response.ok) throw new Error(`HTTP ${response.status}`);
             });
-            if (!put.ok) throw new Error(`HTTP ${put.status}`);
+
+          try {
+            try {
+              await put();
+            } catch {
+              // One retry: a dropped connection is the common case, and the
+              // signature is still valid. A second failure is reported.
+              await put();
+            }
             slots[index] = {
               key: ticket.key,
               filename: file.name,
@@ -199,7 +233,11 @@ export function useSlideUpload(
         );
         if (uploads.length === 0) return;
 
-        const done = await confirmSlides({ sessionId, uploads });
+        const done = await withDeadline(
+          confirmSlides({ sessionId, uploads }),
+          ACTION_DEADLINE_MS,
+          'confirming slides',
+        );
         if (!done.ok || !done.slides) {
           setError(done.error ?? 'uploadFailed');
           if (done.detail) setDetail(done.detail);

@@ -1,6 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { after } from 'next/server';
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { supabaseConfigured } from '@/lib/env';
@@ -128,11 +129,13 @@ export async function finishLessonVideoUpload(input: {
   const supabase = await staffClient();
 
   const object = await readObjectHead(key, 16);
-  if (!object) return { ok: false, error: 'uploadFailed' };
+  if (!object.ok) return { ok: false, error: 'uploadFailed', detail: object.detail };
 
   const check = checkVideo(object.head, object.size);
   if (!check.ok) {
-    await deleteObject(key);
+    after(async () => {
+      await deleteObject(key);
+    });
     return { ok: false, error: check.error };
   }
 
@@ -208,10 +211,6 @@ export async function removeLessonVideo(input: {
     .eq('class_id', classId)
     .maybeSingle();
 
-  if (row?.video_provider === 'r2' && row.video_id) {
-    await deleteObject(row.video_id);
-  }
-
   const { error } = await supabase
     .from('class_lesson_content')
     .update({
@@ -227,6 +226,16 @@ export async function removeLessonVideo(input: {
   if (error) {
     reportError('video.remove', error, { lessonId, classId });
     return { ok: false, error: 'saveFailed', detail: errorDetail(error) };
+  }
+
+  // The row no longer points at the object, so the removal has happened as far
+  // as every reader is concerned. The bucket delete is a side effect and runs
+  // after the response: a slow bucket must not hold the button.
+  if (row?.video_provider === 'r2' && row.video_id) {
+    const key = row.video_id;
+    after(async () => {
+      await deleteObject(key);
+    });
   }
 
   revalidatePath('/[locale]/admin/courses/[id]', 'page');

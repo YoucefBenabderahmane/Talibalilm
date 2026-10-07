@@ -1,11 +1,13 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { after } from 'next/server';
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { supabaseConfigured } from '@/lib/env';
 import { requireStaff } from '@/lib/auth/guards';
 import { checkImage, MAX_IMAGE_BYTES } from '@/lib/media/image';
+import { runPool } from '@/lib/media/pool';
 import { deckKey, isDeckKey, isSlideKeyFor, safeFilename, slideKey, slideName } from '@/lib/storage/key';
 import {
   deleteObject,
@@ -216,23 +218,27 @@ export async function confirmSlides(input: {
 
   const failed: { key: string; error: string; detail?: string }[] = [];
   const good: { key: string; filename: string; size: number; contentType: string }[] = [];
+  /** Rejected objects, deleted after the response — never on the upload's path. */
+  const rejected: string[] = [];
 
   const heads = await Promise.all(uploads.map((upload) => readObjectHead(upload.key)));
   for (let i = 0; i < uploads.length; i += 1) {
     const upload = uploads[i] as { key: string; filename: string };
     const object = heads[i];
-    if (!object) {
-      failed.push({ key: upload.key, error: 'uploadFailed' });
+    if (!object || !object.ok) {
+      // The evidence, not our reading of it: a bucket that refused to answer
+      // and an object that never landed are not the same failure.
+      failed.push({ key: upload.key, error: 'uploadFailed', detail: object?.detail });
       continue;
     }
     if (object.size > MAX_IMAGE_BYTES) {
-      await deleteObject(upload.key);
+      rejected.push(upload.key);
       failed.push({ key: upload.key, error: 'tooLarge' });
       continue;
     }
     const check = checkImage(object.head);
     if (!check.ok) {
-      await deleteObject(upload.key);
+      rejected.push(upload.key);
       failed.push({ key: upload.key, error: check.error });
       continue;
     }
@@ -241,6 +247,14 @@ export async function confirmSlides(input: {
       filename: safeFilename(upload.filename),
       size: object.size,
       contentType: check.contentType,
+    });
+  }
+
+  // The cleanup is a side effect: the answer above is already decided, and a
+  // slow or unreachable bucket must not hold the batch behind it.
+  if (rejected.length > 0) {
+    after(async () => {
+      await Promise.allSettled(rejected.map((key) => deleteObject(key)));
     });
   }
 
@@ -502,9 +516,18 @@ export async function removeSlide(input: { id: string; sessionId: string }): Pro
   // outlives its row is waste, not an exposure, and a failed delete is logged
   // rather than shown to the teacher as a failure to remove the slide.
   //
+  // The delete runs AFTER the response. A teacher removing a page mid-lesson
+  // must not be held by a bucket round trip, and a bucket that never answers
+  // must not leave the button spinning — which is exactly what it used to do.
+  //
   // A shared deck's objects are NOT deleted: another class points at the same
   // bytes. Removing the slide from this session means removing the row.
-  if (slide.storage_key.startsWith('live/')) await deleteObject(slide.storage_key);
+  if (slide.storage_key.startsWith('live/')) {
+    const key = slide.storage_key;
+    after(async () => {
+      await deleteObject(key);
+    });
+  }
 
   revalidatePath('/[locale]/admin/live/[id]', 'page');
   return OK;
@@ -596,13 +619,22 @@ export async function clearSlides(sessionId: string): Promise<ClearDeckResult> {
   const { error } = await supabase.from('live_slides').delete().eq('session_id', parsed.data);
   if (error) return { ok: false, error: 'saveFailed', detail: errorDetail(error) };
 
-  const results = await Promise.allSettled(keys.map((key) => deleteObject(key)));
-  const stranded = results.filter((result) => result.status === 'rejected').length;
-  if (stranded > 0) {
-    reportError('slides.clearObjects', new Error(`${stranded} objects not deleted`), {
-      sessionId: parsed.data,
+  // After the response, and a handful at a time: a deck can hold hundreds of
+  // pages, and a hundred simultaneous deletes is its own way of hanging. The
+  // count comes from the answers rather than from rejected promises —
+  // `deleteObject` answers false instead of throwing, so the old
+  // `allSettled` count could only ever have been zero.
+  after(async () => {
+    let stranded = 0;
+    await runPool(keys, 8, async (key) => {
+      if (!(await deleteObject(key))) stranded += 1;
     });
-  }
+    if (stranded > 0) {
+      reportError('slides.clearObjects', new Error(`${stranded} objects not deleted`), {
+        sessionId: parsed.data,
+      });
+    }
+  });
 
   revalidatePath('/[locale]/admin/live/[id]', 'page');
   return { ok: true, removed: keys.length };
