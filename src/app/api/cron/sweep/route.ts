@@ -64,21 +64,24 @@ function authorised(request: NextRequest): boolean {
  * undeliverable e-mail must not stop the other students being told.
  */
 /**
- * Remove the accounts that never confirmed and never bought.
+ * Remove accounts nobody will ever use: the ones a database list names.
  *
- * The list comes from the database (see 20260917110000) and the deletion goes
- * through the auth admin API, which is the only thing that can remove a user.
+ * Two lists, one loop. `unconfirmed_users` (20260917110000): never confirmed
+ * their address, never bought. `unreviewed_unpaid_users` (20261007110000): the
+ * spam that DOES confirm — the office never pressed « Confirmer », no order, no
+ * entitlement. The lists are decided in SQL, where they are tested; deletion
+ * goes through the auth admin API, the only thing that can remove a user.
  * Failures are counted, not thrown: one stuck account must not stop the rest,
  * and the next run will try again.
  */
-async function purgeUnconfirmedUsers(
+async function purgeAccounts(
   supabase: ReturnType<typeof createAdminClient>,
+  list: 'unconfirmed_users' | 'unreviewed_unpaid_users',
+  olderThan: string,
 ): Promise<number> {
-  const { data: stale, error } = await supabase.rpc('unconfirmed_users', {
-    older_than: '2 days',
-  });
+  const { data: stale, error } = await supabase.rpc(list, { older_than: olderThan });
   if (error) {
-    reportError('cron.unconfirmed', error, { note: 'nothing deleted this run' });
+    reportError(`cron.${list}`, error, { note: 'nothing deleted this run' });
     return 0;
   }
   if (!stale || stale.length === 0) return 0;
@@ -90,7 +93,7 @@ async function purgeUnconfirmedUsers(
       if (removeError) throw removeError;
       deleted += 1;
     } catch (cause) {
-      reportError('cron.unconfirmed.delete', cause, { userId: account.id });
+      reportError(`cron.${list}.delete`, cause, { userId: account.id });
     }
   }
   return deleted;
@@ -210,7 +213,13 @@ export async function GET(request: NextRequest) {
   // Spam registrations: never confirmed, never bought, older than two days.
   // Two days is long enough that a student who mistyped their address can ask
   // for a new link, and short enough that the list stays clean.
-  const unconfirmedPurged = await purgeUnconfirmedUsers(supabase);
+  const unconfirmedPurged = await purgeAccounts(supabase, 'unconfirmed_users', '2 days');
+
+  // Spam that confirms its address: the office never pressed « Confirmer »,
+  // nothing bought, nothing granted, three days old. Three days is the
+  // school's choice — the office confirms real students well inside it, and
+  // a student cannot order before being confirmed anyway.
+  const unreviewedPurged = await purgeAccounts(supabase, 'unreviewed_unpaid_users', '3 days');
 
   // Rooms nobody closed: five hours is the school's ceiling for one class, and
   // a forgotten tab must not leave a class "live" for a week.
@@ -231,6 +240,7 @@ export async function GET(request: NextRequest) {
     videosPurged,
     installmentReminders: reminders,
     unconfirmedPurged,
+    unreviewedPurged,
     liveSessionsClosed: liveClosed ?? 0,
   };
 

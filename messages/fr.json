@@ -897,7 +897,7 @@
     "backToOrders": "Retour aux commandes",
     "viewStudent": "Voir l’étudiant",
     "studentsTitle": "Étudiants",
-    "studentsLead": "Recherchez par nom ou par e-mail. Ouvrez une fiche pour voir et gérer les accès.",
+    "studentsLead": "Recherchez par nom ou par e-mail. Ouvrez une fiche pour voir et gérer les accès. Une inscription sans « Confirmer » et sans commande est supprimée automatiquement après 3 jours.",
     "studentsEmpty": "Aucun étudiant ne correspond.",
     "searchStudents": "Rechercher un étudiant…",
     "colName": "Nom",

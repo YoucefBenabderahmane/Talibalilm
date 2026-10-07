@@ -1420,6 +1420,10 @@ export interface Database {
         Args: { older_than: string };
         Returns: { id: string; email: string; created_at: string }[];
       };
+      unreviewed_unpaid_users: {
+        Args: { older_than: string };
+        Returns: { id: string; email: string; created_at: string }[];
+      };
       admin_correct_order: {
         Args: {
           target_order: string;

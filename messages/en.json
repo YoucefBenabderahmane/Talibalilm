@@ -897,7 +897,7 @@
     "backToOrders": "Back to orders",
     "viewStudent": "View student",
     "studentsTitle": "Students",
-    "studentsLead": "Search by name or email. Open a record to see and manage access.",
+    "studentsLead": "Search by name or email. Open a record to see and manage access. A registration with no « Confirmer » and no order is deleted automatically after 3 days.",
     "studentsEmpty": "No student matches.",
     "searchStudents": "Search for a student…",
     "colName": "Name",
