@@ -115,7 +115,12 @@ class PlainFilterFactory {
 interface InOpen {
   type: 'open';
   id: number;
-  bytes: ArrayBuffer;
+  /**
+   * The File itself, not its bytes. A File is shared with the worker rather
+   * than copied, so the room's thread never allocates a second copy of a
+   * two-hundred-megabyte document — this thread reads what it needs.
+   */
+  file: File;
   baseName: string;
 }
 interface InRender {
@@ -157,7 +162,7 @@ let baseName = 'slide';
  * teacher's; the caller sees it as an error either way and the main thread can
  * still take over.
  */
-async function open(bytes: ArrayBuffer): Promise<number> {
+async function open(file: File): Promise<number> {
   let lastError: unknown = null;
 
   for (const engine of ENGINES) {
@@ -177,7 +182,7 @@ async function open(bytes: ArrayBuffer): Promise<number> {
       await engine.inline();
 
       const task = pdfjs.getDocument({
-        data: new Uint8Array(bytes),
+        data: new Uint8Array(await file.arrayBuffer()),
         useWorkerFetch: false,
         disableFontFace: true,
         useSystemFonts: false,
@@ -271,7 +276,7 @@ scope.onmessage = (event) => {
     try {
       if (message.type === 'open') {
         baseName = message.baseName;
-        const pages = await open(message.bytes);
+        const pages = await open(message.file);
         post({ type: 'ready', id: message.id, pages });
         return;
       }

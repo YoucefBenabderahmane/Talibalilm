@@ -290,7 +290,18 @@ export function Classroom({
     live.send({ t: 'deck' });
   };
 
-  const deckUpload = useSlideUpload(sessionId, { onAdded: addSlide });
+  /**
+   * Whether the class is being recorded, read at conversion time.
+   *
+   * A ref rather than state: a conversion asks once, when it starts, and the
+   * answer must not rebuild the upload callback — or the recorder — on every
+   * tick of the timer.
+   */
+  const recordingActive = useRef(false);
+  const deckUpload = useSlideUpload(sessionId, {
+    onAdded: addSlide,
+    lowPriority: () => recordingActive.current,
+  });
 
   /**
    * What the recorder captures.
@@ -323,6 +334,12 @@ export function Classroom({
         .map((pub) => pub.track?.mediaStreamTrack)
         .filter((t): t is MediaStreamTrack => !!t && t.kind === 'audio'),
   });
+
+  // Kept for the upload's low-priority check: while this is true, a PDF
+  // conversion keeps two workers instead of four.
+  useEffect(() => {
+    recordingActive.current = recorder.state !== 'idle';
+  }, [recorder.state]);
 
   // History arrives from the database, already filtered by the same policies
   // that guard the room, so a late joiner sees the lesson so far.
