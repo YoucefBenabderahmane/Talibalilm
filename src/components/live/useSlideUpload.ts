@@ -50,6 +50,14 @@ export interface SlideUploadState {
   detail: string | null;
   /** Pages the deck had no room for — the cap, made visible rather than silent. */
   skipped: number;
+  /**
+   * A fact about how the conversion ran, when it is worth saying.
+   *
+   * Today that is one thing: the worker pool was not available and the deck is
+   * being drawn on the room's own thread. Staff see it; nobody should have to
+   * guess which path ran.
+   */
+  notice: string | null;
   clearError: () => void;
   upload: (files: FileList | File[]) => Promise<void>;
 }
@@ -63,6 +71,12 @@ export interface SlideUploadHandlers {
    * rebuilding the page a lesson is happening on.
    */
   onAdded?: (slide: { id: string; url: string | null; filename: string }, index: number) => void;
+  /**
+   * Read once per file, when the conversion starts. True while the room is
+   * recording or presenting, so the pool keeps two workers instead of four and
+   * the recording keeps its frames.
+   */
+  lowPriority?: () => boolean;
 }
 
 /**
@@ -104,6 +118,7 @@ export function useSlideUpload(
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<string | null>(null);
   const [skipped, setSkipped] = useState(0);
+  const [notice, setNotice] = useState<string | null>(null);
   const addedRef = useRef(false);
   // Kept in refs so `upload` is not rebuilt — and cannot go stale — every time
   // the caller re-renders.
@@ -111,12 +126,15 @@ export function useSlideUpload(
   onDoneRef.current = handlers.onDone;
   const onAddedRef = useRef(handlers.onAdded);
   onAddedRef.current = handlers.onAdded;
+  const lowPriorityRef = useRef(handlers.lowPriority);
+  lowPriorityRef.current = handlers.lowPriority;
 
   const upload = useCallback(
     async (input: FileList | File[]) => {
       setError(null);
       setDetail(null);
       setSkipped(0);
+      setNotice(null);
       addedRef.current = false;
       const chosen = Array.from(input);
       /** A batch of pages at a time, in order, across every file of this drop. */
@@ -350,10 +368,30 @@ export function useSlideUpload(
             // pages use the old session-scoped keys and everything still works.
             if (supported) catalogPages.set(fingerprint, []);
             let totalPages = 0;
+            let shownProgress = 0;
             const delivered = await pdfPages(file, {
+              lowPriority: lowPriorityRef.current?.() ?? false,
+              // A silent fallback is how a week went by without anyone knowing
+              // which path ran. Staff see this line; the console keeps the raw
+              // reason.
+              onFallback: (reason) => {
+                setNotice(
+                  `Conversion PDF sans fils dédiés (${reason}) : elle se fait sur l’onglet, qui peut répondre lentement pendant ce temps.`,
+                );
+              },
               onProgress: (progress) => {
                 totalPages = progress.pages;
-                setConverting(progress);
+                // Every page would re-render the whole room for a number
+                // nobody reads that closely; it moves in fives, and always at
+                // the first and the last.
+                if (
+                  progress.page === 1 ||
+                  progress.page === progress.pages ||
+                  progress.page - shownProgress >= 5
+                ) {
+                  shownProgress = progress.page;
+                  setConverting(progress);
+                }
               },
               onPage: (page) => enqueue(page.file, supported ? fingerprint : undefined),
             });
@@ -415,6 +453,7 @@ export function useSlideUpload(
     error,
     detail,
     skipped,
+    notice,
     clearError: () => {
       setError(null);
       setDetail(null);
