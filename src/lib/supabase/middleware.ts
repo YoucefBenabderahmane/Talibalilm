@@ -1,7 +1,6 @@
 import { createServerClient } from '@supabase/ssr';
 import type { NextRequest, NextResponse } from 'next/server';
 import { publicEnv, supabaseConfigured } from '@/lib/env';
-import type { AuthMode } from './auth-mode';
 import type { Database } from './database.types';
 
 /**
@@ -12,23 +11,17 @@ const AUTH_COOKIE = /^sb-.*-auth-token/;
 
 /**
  * Refresh the auth session on the response the locale middleware already
- * produced, and say who the request belongs to.
+ * produced.
  *
  * Supabase access tokens are short-lived; without this the user is silently
  * signed out mid-session. It has to run on the *same* response object that
  * gets returned, or the refreshed cookies never reach the browser.
  *
- * The mode decides how the token is checked (see `auth-mode.ts`):
- * `getUser()` revalidates against the Auth server, `getClaims()` verifies the
- * token locally when the project uses asymmetric signing keys and falls back
- * to the same network call on the legacy symmetric key. Both are called
- * immediately after `createServerClient`, before anything else can read the
- * cookies — `getSession()` inside `getClaims()` is also what rotates them.
+ * Returns the user so the caller can gate routes without a second round trip.
  */
 export async function refreshSession(
   request: NextRequest,
   response: NextResponse,
-  mode: AuthMode,
 ): Promise<{ userId: string | null }> {
   // Before the Supabase project is connected, the marketing site still has to
   // render. Treat "not configured" as "signed out" rather than throwing.
@@ -60,21 +53,13 @@ export async function refreshSession(
     },
   );
 
-  // verify: the Auth server is asked, exactly as before. Used on the pages
-  // that decide whether a signed-in visitor is allowed to be there.
-  if (mode === 'verify') {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    return { userId: user?.id ?? null };
-  }
+  // getUser(), not getSession(): getSession() trusts the cookie as-is, while
+  // getUser() revalidates the JWT against the auth server. In middleware,
+  // which is what protected routes lean on, the difference is the whole
+  // security guarantee.
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  // claims: the token is checked locally where the project allows it. A
-  // failure is "signed out", the same answer getUser() gives on error. The
-  // pages behind /dashboard and /admin re-verify server-side in
-  // `requireViewer()`, so a still-valid token for a deleted user opens
-  // nothing — it only avoids the round trip for live users.
-  const { data, error } = await supabase.auth.getClaims();
-  if (error || !data) return { userId: null };
-  return { userId: typeof data.claims.sub === 'string' ? data.claims.sub : null };
+  return { userId: user?.id ?? null };
 }
