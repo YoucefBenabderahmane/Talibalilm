@@ -23,11 +23,12 @@ import { requireLocale } from '@/i18n/routing';
  * (see `CATALOGUE_TTL` in `@/lib/data/cache-tags`) makes it immediate.
  *
  * The number is a literal because Next reads it statically; keep it equal to
- * `CATALOGUE_TTL`. It was 300, and regenerating this page every five minutes
- * was the largest single consumer of function CPU in the app — see the note in
- * `cache-tags.ts`. Admin edits still show immediately, through the tag.
+ * `CATALOGUE_TTL`. It was 300, then 3600, and regenerating this page around
+ * the clock was the largest single consumer of function CPU in the app — see
+ * the note in `cache-tags.ts`. Admin edits still show immediately, through the
+ * tag.
  */
-export const revalidate = 3600;
+export const revalidate = 86400;
 
 export default async function HomePage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
