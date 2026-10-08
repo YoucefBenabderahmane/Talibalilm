@@ -13,7 +13,7 @@ import type { CatalogStatus, EventPhase } from '@/lib/supabase/database.types';
  * The reads here are anonymous by nature — a banner does not depend on who is
  * looking — so they go through `createPublicClient()` and are cached. The
  * admin actions that change them call `revalidateTag` with the tags below,
- * which is what keeps a saved change from waiting an hour to appear.
+ * which is what keeps a saved change from waiting a day to appear.
  */
 
 export const SITE_SETTINGS_TAG = 'site-settings';
@@ -89,7 +89,7 @@ const readSettings = unstable_cache(
     };
   },
   ['site-settings'],
-  { tags: [SITE_SETTINGS_TAG], revalidate: 3600 },
+  { tags: [SITE_SETTINGS_TAG], revalidate: 86400 },
 );
 
 export async function getSiteSettings(): Promise<SiteSettings> {
@@ -168,7 +168,7 @@ const readEvents = unstable_cache(
     return (data ?? []).map(toEvent);
   },
   ['events-published'],
-  { tags: [EVENTS_TAG], revalidate: 3600 },
+  { tags: [EVENTS_TAG], revalidate: 86400 },
 );
 
 /** Published events, for the home page. */
@@ -261,7 +261,7 @@ const readReviews = unstable_cache(
     return (data ?? []).map(toReview);
   },
   ['reviews-published'],
-  { tags: [REVIEWS_TAG], revalidate: 3600 },
+  { tags: [REVIEWS_TAG], revalidate: 86400 },
 );
 
 export async function listReviews(limit = 9): Promise<ReviewView[]> {

@@ -1,24 +1,13 @@
 import createIntlMiddleware from 'next-intl/middleware';
 import { NextResponse, type NextRequest } from 'next/server';
 import { routing } from '@/i18n/routing';
+import { authMode, isAuthOnly, withoutLocale } from '@/lib/supabase/auth-mode';
 import { refreshSession } from '@/lib/supabase/middleware';
 
 const handleI18n = createIntlMiddleware(routing);
 
 /** Paths that require a signed-in user. Membership is checked deeper, in RLS. */
 const PROTECTED = ['/dashboard', '/admin'];
-
-/** Paths a signed-in user has no business seeing. */
-const AUTH_ONLY = ['/login', '/register', '/forgot-password'];
-
-/** Strip a leading `/fr` or `/en` so route matching is locale-agnostic. */
-function withoutLocale(pathname: string): string {
-  for (const locale of routing.locales) {
-    if (pathname === `/${locale}`) return '/';
-    if (pathname.startsWith(`/${locale}/`)) return pathname.slice(locale.length + 1);
-  }
-  return pathname;
-}
 
 /**
  * The locale prefix the request came in with, so a redirect stays in the
@@ -73,11 +62,15 @@ export async function middleware(request: NextRequest) {
   // written onto whatever response it produces — including its redirects.
   const response = handleI18n(request);
 
-  const { userId } = await refreshSession(request, response);
+  // The mode is a pure function of the path (see `auth-mode.ts`): the pages
+  // that decide whether a signed-in visitor belongs get the server-verified
+  // `getUser()`, everything else the local `getClaims()`. Nothing runs between
+  // `createServerClient` and the auth call — the comment there says why.
+  const { userId } = await refreshSession(request, response, authMode(request.nextUrl.pathname));
 
   const path = withoutLocale(request.nextUrl.pathname);
   const isProtected = PROTECTED.some((p) => path === p || path.startsWith(`${p}/`));
-  const isAuthOnly = AUTH_ONLY.some((p) => path === p || path.startsWith(`${p}/`));
+  const isAuthOnlyPath = isAuthOnly(request.nextUrl.pathname);
 
   const prefix = localePrefix(request.nextUrl.pathname);
 
@@ -89,7 +82,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (isAuthOnly && userId) {
+  if (isAuthOnlyPath && userId) {
     const url = request.nextUrl.clone();
     url.pathname = `${prefix}/dashboard`;
     url.search = '';

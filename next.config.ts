@@ -42,6 +42,13 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
 
+  // CI owns lint: `.github/workflows/ci.yml` runs `npm run lint` on every pull
+  // request and on pushes to main. Re-running it inside the build added a
+  // second full ESLint pass to every deploy and bought nothing. TypeScript is
+  // deliberately left alone (`typescript.ignoreBuildErrors` stays unset): the
+  // type check remains in the build as the safety net, style does not.
+  eslint: { ignoreDuringBuilds: true },
+
   // A Server Action body is capped at 1 MB by default, and the cover uploader
   // posts the file through one. That cap is SMALLER than the 5 MB the image
   // validator accepts, so for a long time every photo off a phone was refused

@@ -1,7 +1,7 @@
 import { unstable_cache } from 'next/cache';
 import { createPublicClient } from '@/lib/supabase/server';
 import { supabaseConfigured } from '@/lib/env';
-import { CATALOGUE_TAG, CATALOGUE_TTL } from '@/lib/data/cache-tags';
+import { CATALOGUE_TAG, CATALOGUE_TTL, PACKS_TTL } from '@/lib/data/cache-tags';
 import { reportError } from '@/lib/observability/report';
 import type { OfferPack } from '@/lib/commerce/quote';
 import type { PlanningEntry } from '@/components/marketing/PlanningTarifs';
@@ -235,7 +235,9 @@ const readPacks = unstable_cache(
     });
   },
   ['packs-published'],
-  { tags: [CATALOGUE_TAG], revalidate: CATALOGUE_TTL },
+  // Not CATALOGUE_TTL: the pack list is the one cached read that changes with
+  // the clock (window + exhaustion), not only with an edit. See `PACKS_TTL`.
+  { tags: [CATALOGUE_TAG], revalidate: PACKS_TTL },
 );
 
 /** The offers currently on, in one delivery mode. */
