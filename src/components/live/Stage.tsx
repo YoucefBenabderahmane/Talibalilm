@@ -2,11 +2,19 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { ChevronLeft, ChevronRight, Loader2, Maximize2, Minimize2 } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  Maximize2,
+  Minimize2,
+  Presentation,
+} from 'lucide-react';
 import { Track, type Participant, type Room } from 'livekit-client';
 import { cn } from '@/lib/utils';
 import { clampPan, nextZoom } from '@/lib/live/zoom';
 import { SharePip } from './SharePip';
+import { StageCamera } from './StageCamera';
 import { VideoTile } from './VideoTile';
 import type { RoomPerson } from './useRoom';
 
@@ -14,9 +22,10 @@ import type { RoomPerson } from './useRoom';
  * What the class is looking at.
  *
  * A lesson is not a meeting of equals, so the layout is not an even grid. When
- * something is being presented — a shared screen, or the slide deck — it takes
- * the stage and everyone else becomes a strip. Otherwise the teacher is large
- * and the students are small, which is what a class looks like.
+ * something is being presented — a shared screen, the slide deck, or a student
+ * the teacher has brought onto the stage — it takes the big box and everyone
+ * else becomes a strip. Otherwise the teacher is large and the students are
+ * small, which is what a class looks like.
  *
  * Only participants whose video is actually flowing get a tile of their own in
  * the strip; forty cameras-off tiles would be forty empty boxes pushing the
@@ -34,6 +43,8 @@ export function Stage({
   sharePip,
   onMinimizeShare,
   onExpandShare,
+  staged,
+  onStage,
 }: {
   room: Room;
   people: RoomPerson[];
@@ -50,6 +61,10 @@ export function Stage({
   sharePip: boolean;
   onMinimizeShare: () => void;
   onExpandShare: () => void;
+  /** Identity of the student the teacher has put on the stage, or null. */
+  staged: string | null;
+  /** The host alone moves people on and off the stage. */
+  onStage: (identity: string | null) => void;
 }) {
   const t = useTranslations('live');
   const byIdentity = (identity: string): Participant | undefined =>
@@ -63,11 +78,16 @@ export function Stage({
   // reduced. Reduced, the slide (or the teacher) takes it and the share keeps
   // running in the corner.
   const focusIsShare = Boolean(sharer) && !sharePip;
+  const stagedPerson = staged ? people.find((p) => p.identity === staged) : undefined;
 
   // The strip: cameras on first. The sharer keeps their own camera here —
-  // sharing a screen must not make the teacher vanish from their own class.
+  // sharing a screen must not make the teacher vanish from their own class —
+  // and the student on the big stage is not repeated below it. A student who
+  // is staged but hidden behind an expanded share stays in the strip, so the
+  // teacher never loses track of them.
   const strip = people
-    .filter((p) => (focusIsShare || slide ? true : p.identity !== host?.identity))
+    .filter((p) => !(stagedPerson && !focusIsShare && p.identity === stagedPerson.identity))
+    .filter((p) => (focusIsShare || stagedPerson || slide ? true : p.identity !== host?.identity))
     .filter((p) => p.camOn || p.isLocal || p.handUp || p.speaking)
     .slice(0, 12);
 
@@ -77,22 +97,7 @@ export function Stage({
         data-record-container
         className="relative min-h-0 flex-1 overflow-hidden rounded-2xl bg-black/30"
       >
-        {slide && !focusIsShare ? (
-          <SlideStage
-            src={slide}
-            canPresent={canPresent}
-            index={slideIndex}
-            total={slideTotal}
-            onGo={onGoSlide}
-          />
-        ) : slideIndex >= 0 && !focusIsShare ? (
-          // The deck arrives without links and the page on stage is signed on
-          // demand, so there is a moment with an index but no image. Showing
-          // the teacher's camera for it read as the slide having vanished.
-          <div className="flex size-full items-center justify-center">
-            <Loader2 className="size-6 animate-spin text-white/40" aria-hidden="true" />
-          </div>
-        ) : sharer && !sharePip ? (
+        {sharer && !sharePip ? (
           (() => {
             const p = byIdentity(sharer.identity);
             return p ? (
@@ -118,6 +123,33 @@ export function Stage({
               </>
             ) : null;
           })()
+        ) : stagedPerson ? (
+          (() => {
+            const p = byIdentity(stagedPerson.identity);
+            return p ? (
+              <StageCamera
+                participant={p}
+                person={stagedPerson}
+                canMinimize={canPresent}
+                onMinimize={() => onStage(null)}
+              />
+            ) : null;
+          })()
+        ) : slide ? (
+          <SlideStage
+            src={slide}
+            canPresent={canPresent}
+            index={slideIndex}
+            total={slideTotal}
+            onGo={onGoSlide}
+          />
+        ) : slideIndex >= 0 ? (
+          // The deck arrives without links and the page on stage is signed on
+          // demand, so there is a moment with an index but no image. Showing
+          // the teacher's camera for it read as the slide having vanished.
+          <div className="flex size-full items-center justify-center">
+            <Loader2 className="size-6 animate-spin text-white/40" aria-hidden="true" />
+          </div>
         ) : host ? (
           (() => {
             const p = byIdentity(host.identity);
@@ -160,8 +192,21 @@ export function Stage({
             const p = byIdentity(person.identity);
             if (!p) return null;
             return (
-              <li key={person.identity}>
+              <li key={person.identity} className="relative">
                 <VideoTile participant={p} person={person} className="size-full" />
+                {/* The teacher's quick way onto the big box: an expand control
+                    on each student's tile, the same posture as the share's. */}
+                {canPresent && !person.isHost && (
+                  <button
+                    type="button"
+                    onClick={() => onStage(person.identity)}
+                    title={t('studentOnStage')}
+                    className="absolute end-1.5 top-1.5 rounded-lg bg-ink/75 p-1.5 text-white/80 transition-colors hover:bg-ink hover:text-white"
+                  >
+                    <Presentation className="size-3.5" aria-hidden="true" />
+                    <span className="sr-only">{t('studentOnStage')}</span>
+                  </button>
+                )}
               </li>
             );
           })}
