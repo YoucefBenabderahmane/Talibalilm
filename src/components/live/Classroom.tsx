@@ -102,6 +102,8 @@ export function Classroom({
    * the same layout — Meet's "minimize", not "stop sharing".
    */
   const [sharePip, setSharePip] = useState(false);
+  /** Identity of the student the teacher has brought onto the main stage. */
+  const [staged, setStaged] = useState<string | null>(null);
   const [panelWidth, setPanelWidth] = useState(340);
   const [removed, setRemoved] = useState(removedPeople);
   /** A file is over the room; the class is about to get a new slide. */
@@ -183,6 +185,7 @@ export function Classroom({
         setTab(message.tab);
         if (message.boardOnStage !== undefined) setBoardOnStage(message.boardOnStage);
         if (message.sharePip !== undefined) setSharePip(message.sharePip);
+        if (message.stage !== undefined) setStaged(message.stage);
       } else if (message.t === 'chat') {
         // The teacher missed a whole conversation by not noticing the tab;
         // the badge is the answer to that, not a louder notification.
@@ -205,6 +208,35 @@ export function Classroom({
   const { status: roomStatus, send: sendToRoom } = live;
 
   /**
+   * A student the teacher put on the stage opens their camera by themselves.
+   *
+   * The click on "show on stage" is the approval; making the student then hunt
+   * for their own camera button is the delay the staging was meant to remove.
+   * Only on the transition onto the stage — a student who turns the camera off
+   * afterwards is respected, and re-staging them opens it again.
+   *
+   * The permission may arrive a moment after the stage message; this effect
+   * waits for it rather than giving up, because `allow-speak` reaches LiveKit
+   * and the browser through two different paths.
+   */
+  const openedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (isHost) return;
+    if (!staged || staged !== live.room.localParticipant.identity) {
+      openedFor.current = null;
+      return;
+    }
+    if (openedFor.current === staged) return;
+    if (live.camOn) {
+      openedFor.current = staged;
+      return;
+    }
+    if (!(live.abilities?.camera ?? initial.camera_allowed)) return;
+    openedFor.current = staged;
+    void live.room.localParticipant.setCameraEnabled(true).catch(() => {});
+  }, [isHost, staged, live.room, live.camOn, live.abilities, initial.camera_allowed]);
+
+  /**
    * Show one slide to the class — the teacher's move, refused from anyone else.
    *
    * A running share is reduced to the corner, never stopped: Meet's rule, and
@@ -212,11 +244,39 @@ export function Classroom({
    * the class reads the slide, and the corner's expand button puts it back on
    * the stage. Ending a student's share outright is still the participants
    * panel's job, one button away.
+   *
+   * A slide takes the stage from a student the teacher had put there: the
+   * latest explicit move is the one the class sees.
    */
   const present = (index: number) => {
     if (live.people.some((p) => p.sharing)) setSharePip(true);
+    setStaged(null);
     setSlide(index);
     live.send({ t: 'slide', i: index });
+  };
+
+  /**
+   * Put a student on the big stage, or take them off it.
+   *
+   * The teacher's decision travels as `focus`, so the whole class sees the same
+   * layout — and so does a late joiner, through the sync answer. Staging is
+   * also an approval: a camera in this room is granted only to a student who
+   * may speak, so the same one-decision `allow-speak` the participants panel
+   * already gives is applied first, and the student's own page opens the
+   * camera when the permission arrives.
+   */
+  const stageStudent = (identity: string | null) => {
+    if (!isHost) return;
+    setStaged(identity);
+    if (!identity) return;
+
+    // One content at a time: the student replaces the board, and a running
+    // share drops to the corner rather than being stopped.
+    setBoardOnStage(false);
+    if (live.people.some((p) => p.sharing)) setSharePip(true);
+
+    const person = live.people.find((p) => p.identity === identity);
+    if (person && !person.camOn) void hostAction(identity, 'allow-speak');
   };
 
   /**
@@ -391,8 +451,8 @@ export function Classroom({
    */
   useEffect(() => {
     if (!isHost || roomStatus !== 'connected') return;
-    sendToRoom({ t: 'focus', tab, boardOnStage, sharePip });
-  }, [isHost, tab, boardOnStage, sharePip, roomStatus, sendToRoom]);
+    sendToRoom({ t: 'focus', tab, boardOnStage, sharePip, stage: staged });
+  }, [isHost, tab, boardOnStage, sharePip, staged, roomStatus, sendToRoom]);
 
   // A student asks once, on entry. The teacher's answer arrives as an ordinary
   // focus message, so a browser that joins halfway through opens on the lesson
@@ -406,10 +466,11 @@ export function Classroom({
   // page the class is on. Only when asked — this must not fire on every slide.
   useEffect(() => {
     if (!isHost || roomStatus !== 'connected' || syncAsk === 0) return;
-    sendToRoom({ t: 'focus', tab, boardOnStage, sharePip });
+    sendToRoom({ t: 'focus', tab, boardOnStage, sharePip, stage: staged });
     if (slideRef.current >= 0) sendToRoom({ t: 'slide', i: slideRef.current });
-    // Depends on the ask alone: `tab`, `boardOnStage` and the slide are read
-    // through refs or sent by the effects that already watch them.
+    // Depends on the ask alone: `tab`, `boardOnStage`, `sharePip` and the
+    // staged student are read through this render's values, which are current
+    // when the ask arrives.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncAsk, isHost, roomStatus, sendToRoom]);
 
@@ -631,6 +692,7 @@ export function Classroom({
     } else if (key === 'board') {
       setSharePip(true);
       setBoardOnStage(true);
+      setStaged(null);
     }
   };
 
@@ -739,6 +801,20 @@ export function Classroom({
       <header className="flex items-center gap-3 border-b border-white/10 px-4 py-2.5">
         <h1 className="min-w-0 flex-1 truncate font-display text-[15px] font-semibold">{title}</h1>
 
+        {/* How many are in the room. The teacher asked for it by name, and it
+            is the same list the participants panel shows; nobody is named by
+            the number. */}
+        <span
+          className="flex shrink-0 items-center gap-1.5 text-[12px] text-white/60"
+          title={t('participantsCount', { count: live.people.length })}
+        >
+          <Users className="size-3.5" aria-hidden="true" />
+          <span className="tabular-nums" aria-hidden="true">
+            {live.people.length}
+          </span>
+          <span className="sr-only">{t('participantsCount', { count: live.people.length })}</span>
+        </span>
+
         {live.status === 'reconnecting' && (
           <span className="flex items-center gap-1.5 text-[12px] text-gold-300" role="status">
             <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
@@ -800,6 +876,8 @@ export function Classroom({
                 sharePip={sharePip}
                 onMinimizeShare={() => setSharePip(true)}
                 onExpandShare={() => setSharePip(false)}
+                staged={staged}
+                onStage={stageStudent}
               />
             )}
           </div>
@@ -932,8 +1010,10 @@ export function Classroom({
             <ParticipantsPanel
               people={live.people}
               isHost={isHost}
+              staged={staged}
               removed={removed}
               onAction={(identity, action) => void hostAction(identity, action)}
+              onStage={stageStudent}
               onRestore={(userId) => void restorePerson(userId)}
               onClearAsk={live.clearAsk}
             />
@@ -945,7 +1025,12 @@ export function Classroom({
               <div className="flex min-h-0 flex-1 flex-col">
                 <button
                   type="button"
-                  onClick={() => setBoardOnStage(true)}
+                  onClick={() => {
+                    setBoardOnStage(true);
+                    // The board is now what the class is looking at; a staged
+                    // student steps down, exactly as presenting a slide does.
+                    setStaged(null);
+                  }}
                   className="flex items-center justify-center gap-2 border-b border-white/10 p-2 text-[12px] text-white/70 transition-colors hover:bg-white/5 hover:text-white"
                 >
                   <Maximize2 className="size-3.5" aria-hidden="true" />

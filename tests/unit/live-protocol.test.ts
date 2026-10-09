@@ -63,6 +63,17 @@ describe('decodeMessage — everything on the wire is another browser’s word',
       tab: 'slides',
       sharePip: false,
     });
+    expect(round({ t: 'focus', tab: 'people', stage: 'student-1' })).toEqual({
+      t: 'focus',
+      tab: 'people',
+      stage: 'student-1',
+    });
+    // null is a real answer: the teacher took the student off the stage.
+    expect(round({ t: 'focus', tab: 'people', stage: null })).toEqual({
+      t: 'focus',
+      tab: 'people',
+      stage: null,
+    });
     expect(round({ t: 'ended' })).toEqual({ t: 'ended' });
   });
 
@@ -122,6 +133,22 @@ describe('decodeMessage — everything on the wire is another browser’s word',
     expect(
       decodeMessage(
         encodeMessage({ t: 'focus', tab: 'slides', sharePip: 'yes' } as unknown as RoomMessage),
+      ),
+    ).toBeNull();
+    // A stage is an identity string or an explicit null; a number or an
+    // oversized value is neither.
+    expect(
+      decodeMessage(
+        encodeMessage({ t: 'focus', tab: 'people', stage: 42 } as unknown as RoomMessage),
+      ),
+    ).toBeNull();
+    expect(
+      decodeMessage(
+        encodeMessage({
+          t: 'focus',
+          tab: 'people',
+          stage: 'x'.repeat(201),
+        } as unknown as RoomMessage),
       ),
     ).toBeNull();
   });
