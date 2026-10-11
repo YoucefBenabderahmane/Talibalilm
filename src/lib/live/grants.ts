@@ -16,7 +16,12 @@
  * not mint a token that said otherwise. Here we mint it ourselves.
  */
 
-export type TrackSource = 'camera' | 'microphone' | 'screen_share' | 'screen_share_audio';
+/**
+ * `slides` is the teacher's live deck: a page drawn on her machine and streamed
+ * as its own track (LiveKit's `Unknown` source), so it never takes the place of
+ * a real screen share. Granted to the host only.
+ */
+export type TrackSource = 'camera' | 'microphone' | 'screen_share' | 'screen_share_audio' | 'slides';
 
 export interface RoomPermissions {
   /** Staff. Publishes freely, and holds the controls over everyone else. */
@@ -59,7 +64,7 @@ export function roomGrant(room: string, p: RoomPermissions): RoomGrant {
       canSubscribe: true,
       canPublish: true,
       canPublishData: true,
-      canPublishSources: ['camera', 'microphone', 'screen_share', 'screen_share_audio'],
+      canPublishSources: ['camera', 'microphone', 'screen_share', 'screen_share_audio', 'slides'],
       roomAdmin: true,
     };
   }

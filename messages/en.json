@@ -1145,7 +1145,9 @@
     "diagBrowserTestLead": "The server cannot answer “does a browser upload get through?” — only the browser can. This sends eight bytes to R2 by exactly the path a slide or a video takes, then deletes the file. If it gets through, every upload does.",
     "diagBrowserTesting": "Uploading…",
     "diagBrowserOk": "The browser wrote to the bucket and the test file was deleted. Slide and video uploads work.",
-    "diagBrowserBlocked": "The browser was blocked before any response existed (no HTTP status). That is the signature of a CORS refusal: add AllowedOrigins [your domain], AllowedMethods [\"PUT\"], AllowedHeaders [\"content-type\"] to the bucket.",
+    "diagBrowserBlocked": "The browser was blocked before any response existed (no HTTP status). That is the signature of a CORS refusal: add AllowedOrigins [your domain], AllowedMethods [\"PUT\", \"GET\"], AllowedHeaders [\"content-type\"] to the bucket.",
+    "diagBrowserReadOk": "Reading (GET) is allowed: slides will appear in class recordings.",
+    "diagBrowserReadBlocked": "Reading (GET) is refused by the CORS rule: slides will appear as an empty frame in recordings. Add \"GET\" to the bucket’s AllowedMethods (origin {origin}).",
     "diagBrowserStatus": "R2 answered {status} to the upload.",
     "diagSmtpTest": "Test other mail servers",
     "diagSmtpTestLead": "Tries the configured host, the domain’s own MX records and the conventional names, with the credentials already in place. Nothing is sent: the connection is opened, authenticated and closed.",
@@ -1338,7 +1340,12 @@
       "sessionNotFound": "Session not found.",
       "storageUnavailable": "Slide storage is not configured.",
       "tooLarge": "Image too large: 5 MB maximum.",
-      "uploadFailed": "The upload failed. Try again."
+      "uploadFailed": "The upload failed. Try again.",
+      "liveBroadcastFailed": "The slide shows on your screen but could not be sent to the class. The detail below comes from the browser or the class server.",
+      "liveBusy": "“{name}” is still opening: wait for it to finish before dropping another file.",
+      "liveDuplicate": "“{name}” is already open in the slides: remove it first to drop it again.",
+      "liveFile": "“{name}”: {message}",
+      "livePageFailed": "A page of “{name}” could not be shown. Choose it again; if that keeps happening, reopen the file."
     },
     "handDown": "Lower hand",
     "handUp": "Raise hand",
@@ -1404,7 +1411,26 @@
     "unreachableBody": "The live class server did not answer. Check that NEXT_PUBLIC_LIVEKIT_URL starts with wss:// and that the server is running, then try again.",
     "unreachableTitle": "The room could not be reached",
     "you": "you",
-    "slidesConverting": "Converting the PDF — page {page} of {pages}…"
+    "slidesConverting": "Converting the PDF — page {page} of {pages}…",
+    "dismiss": "Close",
+    "slidesOpening": "Opening “{name}”…",
+    "slidesLiveStudent": "The teacher is presenting slides live.",
+    "slidesLiveNotKept": "This browser could not keep a copy of the file: after reloading the page, drop it again.",
+    "recordSaveNow": "Save the video now",
+    "recordRecovered": "An interrupted recording was found on this computer ({size}, started {date}).",
+    "recordRecoveredDownload": "Download",
+    "recordRecoveredDiscard": "Delete",
+    "recordRecoveredDiscardConfirm": "Permanently delete this recording from the computer?",
+    "recordIssue": {
+      "unsupported": "This browser cannot record the class. Use an up-to-date Google Chrome.",
+      "recorderFailed": "The recording stopped. The part already recorded has been downloaded. Click “Record” to continue in a new file (part {part}).",
+      "pauseFailed": "The browser refused to pause. The recording continues.",
+      "resumeFailed": "The recording could not resume. The part already recorded has been downloaded. Click “Record” to continue in a new file (part {part}).",
+      "slidesNotRecorded": "Slides appear as an empty frame in the recording: the R2 storage does not allow reading them. Add GET to the R2 bucket’s CORS rule. The class itself carries on normally.",
+      "pictureBlocked": "The browser blocked the recording’s picture. Sound is still being recorded.",
+      "micUnavailable": "Your microphone is not captured by the recording. Students are still recorded.",
+      "storageUnavailable": "The backup copy on this computer is off: if the browser crashed, the recording would be lost. Do not close the tab."
+    }
   },
   "contact": {
     "title": "Contact us",

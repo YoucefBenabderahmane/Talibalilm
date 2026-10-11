@@ -1145,7 +1145,9 @@
     "diagBrowserTestLead": "Le serveur ne peut pas répondre à la question « un envoi depuis le navigateur passe-t-il ? » — seul le navigateur le peut. Ce bouton envoie huit octets vers R2 exactement comme le fait une diapositive ou une vidéo, puis le fichier est supprimé. S’il passe, tous les envois passent.",
     "diagBrowserTesting": "Envoi en cours…",
     "diagBrowserOk": "Le navigateur a bien écrit dans le bucket, et le fichier de test a été supprimé. Les envois de diapositives et de vidéos fonctionnent.",
-    "diagBrowserBlocked": "Le navigateur a été bloqué avant toute réponse (aucun code HTTP). C’est la signature d’un refus CORS : ajoutez au bucket la règle AllowedOrigins [votre domaine], AllowedMethods [\"PUT\"], AllowedHeaders [\"content-type\"].",
+    "diagBrowserBlocked": "Le navigateur a été bloqué avant toute réponse (aucun code HTTP). C’est la signature d’un refus CORS : ajoutez au bucket la règle AllowedOrigins [votre domaine], AllowedMethods [\"PUT\", \"GET\"], AllowedHeaders [\"content-type\"].",
+    "diagBrowserReadOk": "La lecture (GET) est autorisée : les diapositives apparaîtront dans les enregistrements du cours.",
+    "diagBrowserReadBlocked": "La lecture (GET) est refusée par la règle CORS : les diapositives seront remplacées par un cadre vide dans les enregistrements. Ajoutez \"GET\" aux AllowedMethods du bucket (origine {origin}).",
     "diagBrowserStatus": "R2 a répondu {status} à l’envoi.",
     "diagSmtpTest": "Tester d’autres serveurs d’envoi",
     "diagSmtpTestLead": "Essaie le serveur configuré, les enregistrements MX du domaine et les noms habituels, avec les identifiants déjà en place. Rien n’est envoyé : la connexion est ouverte, authentifiée, puis fermée.",
@@ -1338,7 +1340,12 @@
       "sessionNotFound": "Séance introuvable.",
       "storageUnavailable": "Le stockage des diapositives n’est pas configuré.",
       "tooLarge": "Image trop lourde : 5 Mo maximum.",
-      "uploadFailed": "L’envoi a échoué. Réessayez."
+      "uploadFailed": "L’envoi a échoué. Réessayez.",
+      "liveBroadcastFailed": "La diapositive s’affiche chez vous, mais elle n’a pas pu être envoyée à la classe. Le détail ci-dessous vient du navigateur ou du serveur du cours.",
+      "liveBusy": "« {name} » est en cours d’ouverture : attendez la fin avant de déposer un autre fichier.",
+      "liveDuplicate": "« {name} » est déjà ouvert dans les diapositives : supprimez-le d’abord pour le déposer à nouveau.",
+      "liveFile": "« {name} » : {message}",
+      "livePageFailed": "Une page de « {name} » n’a pas pu être affichée. Choisissez-la à nouveau ; si cela persiste, rouvrez le fichier."
     },
     "handDown": "Baisser la main",
     "handUp": "Lever la main",
@@ -1404,7 +1411,26 @@
     "unreachableBody": "Le serveur du cours en direct n’a pas répondu. Vérifiez que NEXT_PUBLIC_LIVEKIT_URL commence par wss:// et que le serveur tourne, puis réessayez.",
     "unreachableTitle": "Impossible de joindre la salle",
     "you": "vous",
-    "slidesConverting": "Conversion du PDF — page {page} sur {pages}…"
+    "slidesConverting": "Conversion du PDF — page {page} sur {pages}…",
+    "dismiss": "Fermer",
+    "slidesOpening": "Ouverture de « {name} »…",
+    "slidesLiveStudent": "L’enseignant présente ses diapositives en direct.",
+    "slidesLiveNotKept": "Ce navigateur n’a pas pu garder une copie du fichier : après un rechargement de la page, déposez-le à nouveau.",
+    "recordSaveNow": "Enregistrer la vidéo maintenant",
+    "recordRecovered": "Un enregistrement interrompu a été retrouvé sur cet ordinateur ({size}, commencé le {date}).",
+    "recordRecoveredDownload": "Télécharger",
+    "recordRecoveredDiscard": "Supprimer",
+    "recordRecoveredDiscardConfirm": "Supprimer définitivement cet enregistrement de l’ordinateur ?",
+    "recordIssue": {
+      "unsupported": "Ce navigateur ne peut pas enregistrer le cours. Utilisez Google Chrome à jour.",
+      "recorderFailed": "L’enregistrement s’est arrêté. La partie déjà enregistrée a été téléchargée. Cliquez sur « Enregistrer » pour continuer dans un nouveau fichier (partie {part}).",
+      "pauseFailed": "Le navigateur a refusé la pause. L’enregistrement continue.",
+      "resumeFailed": "L’enregistrement n’a pas pu reprendre. La partie déjà enregistrée a été téléchargée. Cliquez sur « Enregistrer » pour continuer dans un nouveau fichier (partie {part}).",
+      "slidesNotRecorded": "Les diapositives sont remplacées par un cadre vide dans l’enregistrement : le stockage R2 n’autorise pas leur lecture. Ajoutez GET à la règle CORS du bucket R2. Le cours, lui, continue normalement.",
+      "pictureBlocked": "Le navigateur a bloqué l’image de l’enregistrement. Le son continue d’être enregistré.",
+      "micUnavailable": "Votre micro n’est pas capté par l’enregistrement. Les élèves restent enregistrés.",
+      "storageUnavailable": "La copie de secours sur cet ordinateur est désactivée : en cas de plantage, l’enregistrement serait perdu. Ne fermez pas l’onglet."
+    }
   },
   "contact": {
     "title": "Contactez-nous",

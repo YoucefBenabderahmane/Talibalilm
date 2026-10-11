@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { CorsImage } from './CorsImage';
 import { useTranslations } from 'next-intl';
 import {
   ChevronLeft,
@@ -12,6 +13,27 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { SlideUploadState } from './useSlideUpload';
+import type { LiveDeckError } from './useLiveDeck';
+import { LiveThumb } from './LiveThumb';
+
+/** The teacher's live deck, as the panel lists it after the uploaded slides. */
+export interface LivePanelDeck {
+  pages: { id: string; filename: string }[];
+  /** A page's thumbnail; drawn only once it scrolls into view. */
+  render: (pageId: string) => Promise<ImageBitmap | null>;
+  onRemove: (pageId: string) => void;
+  /** The file being opened right now, if one is. */
+  opening: string | null;
+  error: LiveDeckError | null;
+  /** The browser would not keep a copy of the file: no restore after a reload. */
+  notice: 'notKept' | null;
+  /** Why the page could not be sent to the class, verbatim. */
+  broadcastError: string | null;
+}
+
+type PanelItem =
+  | { kind: 'stored'; id: string; url: string | null; filename: string }
+  | { kind: 'live'; id: string; filename: string };
 
 /**
  * The deck, during the lesson.
@@ -36,6 +58,8 @@ export function SlidesPanel({
   onClearAll,
   removeError,
   upload,
+  live,
+  presentingLive = false,
 }: {
   slides: { id: string; url: string | null; filename: string }[];
   current: number;
@@ -51,15 +75,51 @@ export function SlidesPanel({
   removeError: { error: string; detail?: string | null } | null;
   /** The room's upload state — one deck, one set of refusals. */
   upload: SlideUploadState;
+  /** The pages opened on the teacher's machine. The host's panel only. */
+  live?: LivePanelDeck;
+  /** A student's panel: the teacher is presenting pages only her machine has. */
+  presentingLive?: boolean;
 }) {
   const t = useTranslations('live');
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
   const { busy, converting, error, detail, skipped, notice, upload: uploadFiles } = upload;
+  const opening = live?.opening ?? null;
 
-  const remove = async (slide: { id: string }) => {
+  const items: PanelItem[] = [
+    ...slides.map((slide) => ({ kind: 'stored' as const, ...slide })),
+    ...(live?.pages ?? []).map((page) => ({
+      kind: 'live' as const,
+      id: page.id,
+      filename: page.filename,
+    })),
+  ];
+  const total = items.length;
+
+  const liveErrorText = (failure: LiveDeckError) => {
+    switch (failure.code) {
+      case 'duplicate':
+        return t('errors.liveDuplicate', { name: failure.name });
+      case 'busy':
+        return t('errors.liveBusy', { name: failure.name });
+      case 'pageFailed':
+        return t('errors.livePageFailed', { name: failure.name });
+      default:
+        return t('errors.liveFile', {
+          name: failure.name,
+          message: t(`errors.${failure.code}` as 'errors.pdfCorrupt'),
+        });
+    }
+  };
+
+  const remove = async (slide: PanelItem) => {
     if (!window.confirm(t('slideRemoveConfirm'))) return;
+    if (slide.kind === 'live') {
+      // Nothing to wait for: the page lives on this machine.
+      live?.onRemove(slide.id);
+      return;
+    }
     setRemoving(slide.id);
     try {
       await onRemove(slide.id);
@@ -69,7 +129,7 @@ export function SlidesPanel({
   };
 
   const clearAll = async () => {
-    if (!window.confirm(t('slidesClearConfirm', { count: slides.length }))) return;
+    if (!window.confirm(t('slidesClearConfirm', { count: total }))) return;
     setClearing(true);
     try {
       await onClearAll();
@@ -86,13 +146,15 @@ export function SlidesPanel({
 
   const uploader = canPresent ? (
     <label className="m-2 flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-white/20 p-5 text-center transition-colors hover:border-brand-400/70 hover:bg-white/5">
-      {busy > 0 ? (
+      {busy > 0 || opening ? (
         <Loader2 className="size-5 animate-spin text-white/60" aria-hidden="true" />
       ) : (
         <Upload className="size-5 text-white/50" aria-hidden="true" />
       )}
       <span className="text-[13px] font-medium text-white">
-        {converting
+        {opening
+          ? t('slidesOpening', { name: opening })
+          : converting
           ? t('slidesConverting', { page: converting.page, pages: converting.pages })
           : busy > 0
             ? t('slidesUploading', { count: busy })
@@ -133,6 +195,43 @@ export function SlidesPanel({
         </div>
       )}
 
+      {live?.error && (
+        <div role="alert" className="px-3 pb-1.5 text-center">
+          <p className="text-[11px] leading-relaxed text-red-300">{liveErrorText(live.error)}</p>
+          {'detail' in live.error && live.error.detail && (
+            <p className="mt-1 font-mono text-[10px] break-words text-white/35">
+              {live.error.detail}
+            </p>
+          )}
+        </div>
+      )}
+
+      {live?.broadcastError && (
+        <div role="alert" className="px-3 pb-1.5 text-center">
+          <p className="text-[11px] leading-relaxed text-red-300">
+            {t('errors.liveBroadcastFailed')}
+          </p>
+          <p className="mt-1 font-mono text-[10px] break-words text-white/35">
+            {live.broadcastError}
+          </p>
+        </div>
+      )}
+
+      {live?.notice && (
+        <p
+          role="status"
+          className="px-3 pb-1.5 text-center text-[11px] leading-relaxed text-gold-200/80"
+        >
+          {t('slidesLiveNotKept')}
+        </p>
+      )}
+
+      {!canPresent && presentingLive && total > 0 && (
+        <p role="status" className="px-3 pt-2 text-center text-[11px] leading-relaxed text-white/50">
+          {t('slidesLiveStudent')}
+        </p>
+      )}
+
       {skipped > 0 && (
         <p role="status" className="px-3 pb-1.5 text-center text-[11px] leading-relaxed text-gold-200">
           {t('slidesSkipped', { count: skipped })}
@@ -164,11 +263,15 @@ export function SlidesPanel({
         </div>
       )}
 
-      {slides.length === 0 ? (
+      {total === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
           <PresentationIcon className="size-5 text-white/30" aria-hidden="true" />
           <p className="text-[12px] text-white/40">
-            {canPresent ? t('slidesNoneHost') : t('slidesNone')}
+            {canPresent
+              ? t('slidesNoneHost')
+              : presentingLive
+                ? t('slidesLiveStudent')
+                : t('slidesNone')}
           </p>
         </div>
       ) : (
@@ -185,12 +288,12 @@ export function SlidesPanel({
                 <span className="sr-only">{t('slidePrev')}</span>
               </button>
               <p className="flex-1 text-center text-[12px] text-white/60">
-                {current + 1} / {slides.length}
+                {current + 1} / {total}
               </p>
               <button
                 type="button"
-                onClick={() => onGo(Math.min(slides.length - 1, current + 1))}
-                disabled={current >= slides.length - 1}
+                onClick={() => onGo(Math.min(total - 1, current + 1))}
+                disabled={current >= total - 1}
                 className="inline-flex size-8 items-center justify-center rounded-lg text-white/70 hover:bg-white/10 disabled:opacity-30"
               >
                 <ChevronRight className="size-4" aria-hidden="true" />
@@ -217,7 +320,7 @@ export function SlidesPanel({
           )}
 
           <ol className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
-            {slides.map((slide, index) => (
+            {items.map((slide, index) => (
               <li key={slide.id} className="relative">
                 <button
                   type="button"
@@ -230,14 +333,19 @@ export function SlidesPanel({
                   )}
                 >
                   <span className="relative block aspect-video bg-ink">
-                    {slide.url && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={slide.url}
-                        alt={slide.filename}
-                        loading="lazy"
-                        className="absolute inset-0 size-full object-contain"
-                      />
+                    {slide.kind === 'live' ? (
+                      live && <LiveThumb pageId={slide.id} render={live.render} />
+                    ) : (
+                      slide.url && (
+                        // Same CORS load as the stage, so the cache never holds a
+                        // plain copy that would make the stage's CORS load fail.
+                        <CorsImage
+                          src={slide.url}
+                          alt={slide.filename}
+                          loading="lazy"
+                          className="absolute inset-0 size-full object-contain"
+                        />
+                      )
                     )}
                     <span className="absolute start-1.5 top-1.5 rounded bg-black/70 px-1.5 text-[10px] text-white">
                       {index + 1}
