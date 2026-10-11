@@ -1340,7 +1340,12 @@
       "sessionNotFound": "Session not found.",
       "storageUnavailable": "Slide storage is not configured.",
       "tooLarge": "Image too large: 5 MB maximum.",
-      "uploadFailed": "The upload failed. Try again."
+      "uploadFailed": "The upload failed. Try again.",
+      "liveBroadcastFailed": "The slide shows on your screen but could not be sent to the class. The detail below comes from the browser or the class server.",
+      "liveBusy": "“{name}” is still opening: wait for it to finish before dropping another file.",
+      "liveDuplicate": "“{name}” is already open in the slides: remove it first to drop it again.",
+      "liveFile": "“{name}”: {message}",
+      "livePageFailed": "A page of “{name}” could not be shown. Choose it again; if that keeps happening, reopen the file."
     },
     "handDown": "Lower hand",
     "handUp": "Raise hand",
@@ -1408,6 +1413,9 @@
     "you": "you",
     "slidesConverting": "Converting the PDF — page {page} of {pages}…",
     "dismiss": "Close",
+    "slidesOpening": "Opening “{name}”…",
+    "slidesLiveStudent": "The teacher is presenting slides live.",
+    "slidesLiveNotKept": "This browser could not keep a copy of the file: after reloading the page, drop it again.",
     "recordSaveNow": "Save the video now",
     "recordRecovered": "An interrupted recording was found on this computer ({size}, started {date}).",
     "recordRecoveredDownload": "Download",

@@ -129,15 +129,28 @@ interface InRender {
   page: number;
   width: number;
 }
+/**
+ * One page as a ready-to-draw bitmap, for the live deck: no encoding, no
+ * upload — the room draws it straight onto the slide it broadcasts. Fitted
+ * inside `width` × `height` so a portrait page is not drawn 1,920 px wide.
+ */
+interface InBitmap {
+  type: 'bitmap';
+  id: number;
+  page: number;
+  width: number;
+  height: number;
+}
 interface InClose {
   type: 'close';
   id: number;
 }
-type InMessage = InOpen | InRender | InClose;
+type InMessage = InOpen | InRender | InBitmap | InClose;
 
 type OutMessage =
   | { type: 'ready'; id: number; pages: number }
   | { type: 'rendered'; id: number; page: number; blob: Blob; name: string }
+  | { type: 'bitmap'; id: number; page: number; bitmap: ImageBitmap }
   | { type: 'failed'; id: number; page: number }
   | { type: 'error'; id: number; detail: string };
 
@@ -252,6 +265,55 @@ async function renderPage(
   }
 }
 
+/**
+ * One page as an ImageBitmap fitted inside the box, or null.
+ *
+ * The canvas is checked before it is handed over: under memory pressure a
+ * browser can lose a canvas mid-render and hand back an empty one, which a
+ * dark stage shows as a black slide. The page is filled white first, so an
+ * empty corner pixel means the canvas was lost — retried at half size, then
+ * reported as failed rather than shown black.
+ */
+async function renderBitmap(
+  pageNumber: number,
+  width: number,
+  height: number,
+): Promise<ImageBitmap | null> {
+  if (!document_) throw new Error('no document');
+  const page = await document_.getPage(pageNumber);
+  try {
+    const unscaled = page.getViewport({ scale: 1 });
+    const fit = Math.min(width / unscaled.width, height / unscaled.height);
+
+    for (const factor of [1, 0.5]) {
+      const viewport = page.getViewport({ scale: fit * factor });
+      const canvas = new OffscreenCanvas(
+        Math.max(1, Math.round(viewport.width)),
+        Math.max(1, Math.round(viewport.height)),
+      );
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('No 2d context');
+
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({
+        canvas: canvas as unknown as HTMLCanvasElement,
+        viewport,
+        annotationMode: 0,
+      }).promise;
+
+      const probe = context.getImageData(0, 0, 1, 1).data;
+      if (probe[3] !== 0) return canvas.transferToImageBitmap();
+
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+    return null;
+  } finally {
+    page.cleanup();
+  }
+}
+
 /** WebP first, then JPEG, then PNG — the same order, and reason, as the main thread. */
 async function encode(canvas: OffscreenCanvas): Promise<Blob | null> {
   const attempts: { type: string; quality?: number }[] = [
@@ -290,6 +352,15 @@ scope.onmessage = (event) => {
             blob: rendered.blob,
             name: rendered.name,
           });
+        } else {
+          post({ type: 'failed', id: message.id, page: message.page });
+        }
+        return;
+      }
+      if (message.type === 'bitmap') {
+        const bitmap = await renderBitmap(message.page, message.width, message.height);
+        if (bitmap) {
+          post({ type: 'bitmap', id: message.id, page: message.page, bitmap }, [bitmap]);
         } else {
           post({ type: 'failed', id: message.id, page: message.page });
         }

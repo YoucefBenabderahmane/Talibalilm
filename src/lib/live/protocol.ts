@@ -55,7 +55,12 @@ export type RoomMessage =
   /** Said only by the teacher. Dropped if it arrives from anyone else. */
   | { t: 'board'; op: BoardOp }
   | { t: 'board-clear' }
-  | { t: 'slide'; i: number }
+  /**
+   * The page on stage. `live` means the teacher's live deck: the class shows
+   * the teacher's "slides" video track instead of looking `i` up in its own
+   * copy of the uploaded deck, which does not contain those pages.
+   */
+  | { t: 'slide'; i: number; live?: boolean }
   | { t: 'rec'; on: boolean }
   /**
    * The deck changed — slides were just added. The message carries no slide
@@ -154,7 +159,9 @@ export function decodeMessage(payload: Uint8Array): RoomMessage | null {
       case 'slide': {
         const i = (parsed as { i?: unknown }).i;
         if (typeof i !== 'number' || !Number.isInteger(i) || i < 0 || i > 9999) return null;
-        return { t: 'slide', i };
+        // Only a literal `true` counts: anything else is the uploaded deck, as
+        // every message was before the live deck existed.
+        return (parsed as { live?: unknown }).live === true ? { t: 'slide', i, live: true } : { t: 'slide', i };
       }
       case 'rec':
         return { t: 'rec', on: Boolean((parsed as { on?: unknown }).on) };

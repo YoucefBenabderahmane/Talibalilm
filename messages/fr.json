@@ -1340,7 +1340,12 @@
       "sessionNotFound": "Séance introuvable.",
       "storageUnavailable": "Le stockage des diapositives n’est pas configuré.",
       "tooLarge": "Image trop lourde : 5 Mo maximum.",
-      "uploadFailed": "L’envoi a échoué. Réessayez."
+      "uploadFailed": "L’envoi a échoué. Réessayez.",
+      "liveBroadcastFailed": "La diapositive s’affiche chez vous, mais elle n’a pas pu être envoyée à la classe. Le détail ci-dessous vient du navigateur ou du serveur du cours.",
+      "liveBusy": "« {name} » est en cours d’ouverture : attendez la fin avant de déposer un autre fichier.",
+      "liveDuplicate": "« {name} » est déjà ouvert dans les diapositives : supprimez-le d’abord pour le déposer à nouveau.",
+      "liveFile": "« {name} » : {message}",
+      "livePageFailed": "Une page de « {name} » n’a pas pu être affichée. Choisissez-la à nouveau ; si cela persiste, rouvrez le fichier."
     },
     "handDown": "Baisser la main",
     "handUp": "Lever la main",
@@ -1408,6 +1413,9 @@
     "you": "vous",
     "slidesConverting": "Conversion du PDF — page {page} sur {pages}…",
     "dismiss": "Fermer",
+    "slidesOpening": "Ouverture de « {name} »…",
+    "slidesLiveStudent": "L’enseignant présente ses diapositives en direct.",
+    "slidesLiveNotKept": "Ce navigateur n’a pas pu garder une copie du fichier : après un rechargement de la page, déposez-le à nouveau.",
     "recordSaveNow": "Enregistrer la vidéo maintenant",
     "recordRecovered": "Un enregistrement interrompu a été retrouvé sur cet ordinateur ({size}, commencé le {date}).",
     "recordRecoveredDownload": "Télécharger",

@@ -15,17 +15,21 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useRoom } from './useRoom';
-import { Stage } from './Stage';
+import { Stage, type SlideContent } from './Stage';
 import { Controls } from './Controls';
 import { ChatPanel } from './ChatPanel';
 import { ParticipantsPanel, type HostAction } from './ParticipantsPanel';
 import { Whiteboard } from './Whiteboard';
-import { SlidesPanel } from './SlidesPanel';
+import { SlidesPanel, type LivePanelDeck } from './SlidesPanel';
 import { SharePip } from './SharePip';
 import { RemoteAudio } from './RemoteAudio';
 import { useSlideUpload } from './useSlideUpload';
 import { useRecorder } from './useRecorder';
 import { RecorderNotices } from './RecorderNotices';
+import { useLiveDeck } from './useLiveDeck';
+import { useSlideBroadcast } from './useSlideBroadcast';
+import { CanvasHost } from './CanvasHost';
+import { SlideVideo } from './SlideVideo';
 import {
   clearBoard as clearBoardAction,
   controlParticipant,
@@ -86,6 +90,12 @@ export function Classroom({
   const [tab, setTab] = useState<Tab>(isHost ? 'people' : 'chat');
   const [panelOpen, setPanelOpen] = useState(false);
   const [slide, setSlide] = useState(-1);
+  /**
+   * A student's view only: the page on stage is from the teacher's live deck,
+   * so it arrives as her "slides" video track rather than from `deck`.
+   */
+  const [liveSlide, setLiveSlide] = useState(false);
+  const liveSlideRef = useRef(false);
   const [deck, setDeck] = useState<SlideItem[]>(slides);
   /** Why the last removal failed, kept apart from the upload refusals. */
   const [deckError, setDeckError] = useState<{ error: string; detail?: string | null } | null>(
@@ -114,6 +124,14 @@ export function Classroom({
 
   const stageRef = useRef<HTMLDivElement | null>(null);
   const deckRef = useRef(deck);
+
+  /**
+   * The teacher's live deck: files opened on her own machine and streamed,
+   * the way Zoom presents a document. Its pages come after the uploaded deck
+   * in her numbering, so `slide` is one position across both.
+   */
+  const liveDeck = useLiveDeck(sessionId, isHost);
+  const { current: livePagesNow, render: renderLivePage } = liveDeck;
   /** Slide ids whose one-off signing request is already in flight. */
   const signing = useRef<Set<string>>(new Set());
   /** Board strokes waiting to be persisted, and the timer that flushes them. */
@@ -134,14 +152,24 @@ export function Classroom({
       .then((response) => (response.ok ? response.json() : { slides: [] }))
       .then((body: { slides?: { id: string; url: string | null; filename: string }[] }) => {
         const next = body.slides ?? [];
+        const before = deckRef.current.length;
+        deckRef.current = next;
         setDeck(next);
         // A page removed while this browser was on it must not leave the
         // position past the end of the new deck. The teacher's `slide` message
         // normally arrives first; this is the safety net for when it does not.
-        setSlide((s) => (s >= next.length ? next.length - 1 : s));
+        setSlide((s) => {
+          if (s < 0) return s;
+          // The teacher's live pages sit after the uploaded deck: a change in
+          // the uploaded deck moves them, and they are not past its end.
+          if (isHost && s >= before && livePagesNow().length > 0) return s + (next.length - before);
+          // A student on a live page is not looking at the uploaded deck.
+          if (!isHost && liveSlideRef.current) return s;
+          return s >= next.length ? next.length - 1 : s;
+        });
       })
       .catch(() => {});
-  }, [sessionId]);
+  }, [isHost, livePagesNow, sessionId]);
 
   /**
    * The link for the one page being shown, fetched when it is first needed.
@@ -177,7 +205,9 @@ export function Classroom({
       // genuinely came from the teacher.
       if (message.t === 'slide') {
         setSlide(message.i);
-        ensureSlideUrl(message.i);
+        liveSlideRef.current = message.live === true;
+        setLiveSlide(message.live === true);
+        if (!message.live) ensureSlideUrl(message.i);
       } else if (message.t === 'board') setBoard((b) => ({ ...b, ops: [...b.ops, message.op] }));
       else if (message.t === 'board-clear') setBoard({ ops: [], clearedAt: Date.now() });
       else if (message.t === 'focus') {
@@ -188,7 +218,14 @@ export function Classroom({
         // The teacher missed a whole conversation by not noticing the tab;
         // the badge is the answer to that, not a louder notification.
         if (tab !== 'chat') setUnread((n) => n + 1);
-      } else if (message.t === 'deck') refreshDeck();
+      } else if (message.t === 'deck') {
+        // The teacher's deck changed. A live page still on stage is announced
+        // again right behind this message; a deck she emptied is not, and the
+        // class must not keep waiting on a stream that has stopped.
+        liveSlideRef.current = false;
+        setLiveSlide(false);
+        refreshDeck();
+      }
       else if (message.t === 'sync') setSyncAsk((n) => n + 1);
       else if (message.t === 'ended') window.location.assign('/dashboard');
     },
@@ -204,6 +241,54 @@ export function Classroom({
   // Pulled out for the effect below: `live` is a fresh object each render, and
   // the effect must fire on the room's state, not on React re-rendering.
   const { status: roomStatus, send: sendToRoom } = live;
+  const broadcast = useSlideBroadcast(live.room, isHost);
+  const { unpublish: unpublishSlides } = broadcast;
+
+  /** The live page at a position of the teacher's deck, if it is one. */
+  const livePageAt = (index: number) => {
+    if (!isHost) return null;
+    const k = index - deckRef.current.length;
+    return k >= 0 ? (livePagesNow()[k] ?? null) : null;
+  };
+
+  /** Where a reload finds the page the teacher was showing. This tab only. */
+  const liveSlideKey = `talibalim-live-page:${sessionId}`;
+  const rememberLivePage = (pageId: string | null) => {
+    try {
+      if (pageId) window.sessionStorage.setItem(liveSlideKey, pageId);
+      else window.sessionStorage.removeItem(liveSlideKey);
+    } catch {
+      /* Only the return after a reload is lost. */
+    }
+  };
+
+  /** The page the teacher asked for last: an older, slower render never replaces it. */
+  const wantedLive = useRef<string | null>(null);
+
+  /**
+   * Draw a live page and put it in the stream. Resolves true once the class
+   * can see it, false when a newer page was asked for or it could not be drawn
+   * (the deck says why).
+   */
+  const showLive = async (pageId: string, index: number): Promise<boolean> => {
+    wantedLive.current = pageId;
+    let shown = false;
+    // Twice at most: the bitmap can be released by the cache between the
+    // render and the draw, and the second render draws it afresh.
+    for (let attempt = 0; attempt < 2 && !shown; attempt++) {
+      const bitmap = await renderLivePage(pageId, 'stage', 'stage');
+      if (wantedLive.current !== pageId) return false;
+      if (!bitmap) break;
+      shown = await broadcast.show(bitmap);
+    }
+    // The next pages are drawn while the teacher talks about this one, so
+    // turning the page is instant.
+    for (const k of [index + 1, index + 2, index - 1]) {
+      const page = livePageAt(k);
+      if (page) void renderLivePage(page.id, 'stage', 'ahead');
+    }
+    return shown && wantedLive.current === pageId;
+  };
 
   /**
    * Show one slide to the class — the teacher's move, refused from anyone else.
@@ -217,7 +302,19 @@ export function Classroom({
   const present = (index: number) => {
     if (live.people.some((p) => p.sharing)) setSharePip(true);
     setSlide(index);
-    live.send({ t: 'slide', i: index });
+    const page = livePageAt(index);
+    if (!page) {
+      wantedLive.current = null;
+      rememberLivePage(null);
+      live.send({ t: 'slide', i: index });
+      return;
+    }
+    rememberLivePage(page.id);
+    // The class switches once the page is in the stream, so nobody sees the
+    // previous page flash up as the new one.
+    void showLive(page.id, index).then((shown) => {
+      if (shown) live.send({ t: 'slide', i: index, live: true });
+    });
   };
 
   /**
@@ -260,9 +357,12 @@ export function Classroom({
       return;
     }
 
-    const after = removeAt(deckRef.current, slideRef.current, index);
-    deckRef.current = after.deck;
-    setDeck(after.deck);
+    // One numbering across the uploaded deck and the live pages after it.
+    const positions = [...deckRef.current.map((s) => s.id), ...livePagesNow().map((p) => p.id)];
+    const after = removeAt(positions, slideRef.current, index);
+    const nextDeck = deckRef.current.filter((s) => s.id !== id);
+    deckRef.current = nextDeck;
+    setDeck(nextDeck);
     // Every viewer re-reads its own signed copy, then the class follows the
     // teacher to wherever the removal left the presentation.
     live.send({ t: 'deck' });
@@ -280,15 +380,47 @@ export function Classroom({
   const clearDeck = async () => {
     if (!isHost) return;
     setDeckError(null);
-    const result = await clearSlides(sessionId);
-    if (!result.ok) {
-      setDeckError({ error: result.error ?? 'saveFailed', detail: result.detail });
-      return;
+    if (deckRef.current.length > 0) {
+      const result = await clearSlides(sessionId);
+      if (!result.ok) {
+        setDeckError({ error: result.error ?? 'saveFailed', detail: result.detail });
+        return;
+      }
+      deckRef.current = [];
+      setDeck([]);
     }
-    deckRef.current = [];
-    setDeck([]);
+    // The live pages are on this machine: nothing to ask the server.
+    liveDeck.clear();
+    wantedLive.current = null;
+    rememberLivePage(null);
     setSlide(-1);
     live.send({ t: 'deck' });
+  };
+
+  /**
+   * Take one live page off the deck. Nothing to wait for — the page is on this
+   * machine — and the class follows the teacher exactly as for an uploaded one.
+   */
+  const removeLivePage = (pageId: string) => {
+    if (!isHost) return;
+    const pages = livePagesNow();
+    const k = pages.findIndex((p) => p.id === pageId);
+    if (k < 0) return;
+    const index = deckRef.current.length + k;
+    const positions = [...deckRef.current.map((s) => s.id), ...pages.map((p) => p.id)];
+    const before = slideRef.current;
+    const after = removeAt(positions, before, index);
+    liveDeck.remove(pageId);
+    if (before < 0) return;
+    if (after.current < 0) {
+      wantedLive.current = null;
+      rememberLivePage(null);
+      setSlide(-1);
+      // Nothing left to show: the class leaves the live page too.
+      live.send({ t: 'deck' });
+    } else if (after.current !== before || index === before) {
+      present(after.current);
+    }
   };
 
   /**
@@ -303,6 +435,31 @@ export function Classroom({
     onAdded: addSlide,
     lowPriority: () => recordingActive.current,
   });
+
+  /**
+   * A drop on the room or a pick from the panel's button. Opened on this
+   * machine and streamed where the browser can; uploaded as before where it
+   * cannot. Either way the first new page goes up in front of the class.
+   */
+  const addFiles = async (files: FileList | File[]) => {
+    if (!liveDeck.supported) {
+      await deckUpload.upload(files);
+      return;
+    }
+    const first = await liveDeck.open(files);
+    if (first !== null) present(deckRef.current.length + first);
+  };
+  const slideUpload = { ...deckUpload, upload: addFiles };
+
+  const renderThumb = useCallback(
+    (pageId: string) => renderLivePage(pageId, 'thumb', 'thumb'),
+    [renderLivePage],
+  );
+
+  // An emptied live deck stops streaming; the next page shown starts it again.
+  useEffect(() => {
+    if (isHost && liveDeck.pages.length === 0) unpublishSlides();
+  }, [isHost, liveDeck.pages.length, unpublishSlides]);
 
   /**
    * What the recorder captures.
@@ -443,11 +600,37 @@ export function Classroom({
   useEffect(() => {
     if (!isHost || roomStatus !== 'connected' || syncAsk === 0) return;
     sendToRoom({ t: 'focus', tab, boardOnStage, sharePip });
-    if (slideRef.current >= 0) sendToRoom({ t: 'slide', i: slideRef.current });
+    if (slideRef.current >= 0) {
+      sendToRoom(
+        livePageAt(slideRef.current)
+          ? { t: 'slide', i: slideRef.current, live: true }
+          : { t: 'slide', i: slideRef.current },
+      );
+    }
     // Depends on the ask alone: `tab`, `boardOnStage` and the slide are read
     // through refs or sent by the effects that already watch them.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncAsk, isHost, roomStatus, sendToRoom]);
+
+  // After a reload, the live deck comes back from this machine's copy, and the
+  // page the teacher was showing goes back up — the class sees the lesson
+  // resume where it was rather than an empty stage.
+  const resumedLive = useRef(false);
+  useEffect(() => {
+    if (!isHost || resumedLive.current || !liveDeck.restored || roomStatus !== 'connected') return;
+    resumedLive.current = true;
+    if (slideRef.current >= 0 || liveDeck.pages.length === 0) return;
+    let wanted: string | null = null;
+    try {
+      wanted = window.sessionStorage.getItem(liveSlideKey);
+    } catch {
+      /* Nothing to resume. */
+    }
+    const k = wanted ? liveDeck.pages.findIndex((p) => p.id === wanted) : -1;
+    if (k >= 0) present(deckRef.current.length + k);
+    // Once, when the restore is done and the room is up.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHost, liveDeck.restored, liveDeck.pages, roomStatus]);
 
   const presenting = useMemo(
     () =>
@@ -466,7 +649,36 @@ export function Classroom({
     if (presenting === null) setSharePip(false);
   }, [presenting]);
 
-  const currentSlideUrl = slide >= 0 ? (deck[slide]?.url ?? null) : null;
+  const hostIdentity = live.people.find((p) => p.isHost)?.identity ?? null;
+  const hostLivePage =
+    isHost && slide >= deck.length ? (liveDeck.pages[slide - deck.length] ?? null) : null;
+  const slideUrl = slide >= 0 ? (deck[slide]?.url ?? null) : null;
+  const slideTotal = deck.length + (isHost ? liveDeck.pages.length : 0);
+  const stageSlide: SlideContent | null =
+    slide < 0
+      ? null
+      : hostLivePage
+        ? // The teacher sees the very canvas the class is streamed from.
+          { kind: 'live', key: hostLivePage.id, node: <CanvasHost canvas={broadcast.canvas()} /> }
+        : !isHost && liveSlide
+          ? {
+              kind: 'live',
+              key: `live:${slide}`,
+              node: <SlideVideo room={live.room} hostIdentity={hostIdentity} />,
+            }
+          : slideUrl
+            ? { kind: 'image', src: slideUrl }
+            : null;
+
+  const livePanel: LivePanelDeck = {
+    pages: liveDeck.pages,
+    render: renderThumb,
+    onRemove: removeLivePage,
+    opening: liveDeck.opening,
+    error: liveDeck.error,
+    notice: liveDeck.notice,
+    broadcastError: broadcast.error,
+  };
 
   const goToSlide = (index: number) => {
     if (!isHost) return;
@@ -678,7 +890,7 @@ export function Classroom({
     if (key === 'slides') refreshDeck();
     setTab(key);
     if (!live.people.some((p) => p.sharing)) return;
-    if (key === 'slides' && deckRef.current.length > 0) {
+    if (key === 'slides' && deckRef.current.length + livePagesNow().length > 0) {
       present(slideRef.current >= 0 ? slideRef.current : 0);
     } else if (key === 'board') {
       setSharePip(true);
@@ -785,7 +997,7 @@ export function Classroom({
         setDropping(false);
         if (!isHost) return;
         const files = event.dataTransfer.files;
-        if (files?.length) void deckUpload.upload(files);
+        if (files?.length) void addFiles(files);
       }}
     >
       <header className="flex items-center gap-3 border-b border-white/10 px-4 py-2.5">
@@ -856,10 +1068,10 @@ export function Classroom({
                 room={live.room}
                 people={live.people}
                 presenting={presenting}
-                slide={currentSlideUrl}
+                slide={stageSlide}
                 canPresent={isHost}
                 slideIndex={slide}
-                slideTotal={deck.length}
+                slideTotal={slideTotal}
                 onGoSlide={goToSlide}
                 sharePip={sharePip}
                 onMinimizeShare={() => setSharePip(true)}
@@ -1025,7 +1237,9 @@ export function Classroom({
               onRemove={removeSlideAt}
               onClearAll={clearDeck}
               removeError={deckError}
-              upload={deckUpload}
+              upload={slideUpload}
+              live={isHost ? livePanel : undefined}
+              presentingLive={!isHost && liveSlide}
             />
           )}
         </aside>
