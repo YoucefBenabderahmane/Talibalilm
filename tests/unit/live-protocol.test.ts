@@ -45,6 +45,7 @@ describe('decodeMessage — everything on the wire is another browser’s word',
     expect(round({ t: 'chat', body: 'salam' })).toEqual({ t: 'chat', body: 'salam' });
     expect(round({ t: 'hand', up: true })).toEqual({ t: 'hand', up: true });
     expect(round({ t: 'slide', i: 4 })).toEqual({ t: 'slide', i: 4 });
+    expect(round({ t: 'slide', i: 7, live: true })).toEqual({ t: 'slide', i: 7, live: true });
     expect(round({ t: 'deck' })).toEqual({ t: 'deck' });
     expect(round({ t: 'sync' })).toEqual({ t: 'sync' });
     expect(round({ t: 'focus', tab: 'board', boardOnStage: true })).toEqual({
@@ -144,5 +145,19 @@ describe('participantIsHost', () => {
     expect(participantIsHost('')).toBe(false);
     expect(participantIsHost('host')).toBe(false);
     expect(participantIsHost('{"role":')).toBe(false);
+  });
+});
+
+describe('the live deck flag', () => {
+  it('counts only a literal true, so a malformed flag falls back to the uploaded deck', () => {
+    for (const live of ['true', 1, {}, null]) {
+      const raw = new TextEncoder().encode(JSON.stringify({ t: 'slide', i: 2, live }));
+      expect(decodeMessage(raw)).toEqual({ t: 'slide', i: 2 });
+    }
+  });
+
+  it('stays a teacher-only message', () => {
+    expect(acceptFrom({ t: 'slide', i: 1, live: true }, false)).toBe(false);
+    expect(acceptFrom({ t: 'slide', i: 1, live: true }, true)).toBe(true);
   });
 });

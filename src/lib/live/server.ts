@@ -153,6 +153,9 @@ const SOURCE: Record<TrackSource, TrackSourceProto> = {
   microphone: TrackSourceProto.MICROPHONE,
   screen_share: TrackSourceProto.SCREEN_SHARE,
   screen_share_audio: TrackSourceProto.SCREEN_SHARE_AUDIO,
+  // The live deck's track. LiveKit has no "slides" source; Unknown is the
+  // one a publisher may name freely, and only the host is ever granted it.
+  slides: TrackSourceProto.UNKNOWN,
 };
 
 function sources(list: TrackSource[]): TrackSourceProto[] {

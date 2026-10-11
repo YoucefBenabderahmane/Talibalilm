@@ -12,6 +12,10 @@ describe('roomGrant — the host', () => {
     expect(g.canPublishSources).toContain('screen_share');
   });
 
+  it('may stream the live deck, as its own track beside a screen share', () => {
+    expect(roomGrant(ROOM, { ...student, isHost: true }).canPublishSources).toContain('slides');
+  });
+
   it('keeps its powers even if the room muted them', () => {
     // A teacher muted by an earlier state must not lock themselves out of
     // their own class; host powers come from the role, not from a column.
@@ -76,5 +80,18 @@ describe('roomGrant — a student', () => {
     const g = roomGrant(ROOM, student);
     expect(g.room).toBe(ROOM);
     expect(g.room).not.toContain('*');
+  });
+});
+
+describe('roomGrant — the live deck is the teacher’s alone', () => {
+  it('is never granted to a student, whatever else they are allowed', () => {
+    for (const p of [
+      student,
+      { ...student, cameraAllowed: true },
+      { ...student, screenAllowed: true },
+      { ...student, cameraAllowed: true, screenAllowed: true },
+    ]) {
+      expect(roomGrant(ROOM, p).canPublishSources).not.toContain('slides');
+    }
   });
 });
