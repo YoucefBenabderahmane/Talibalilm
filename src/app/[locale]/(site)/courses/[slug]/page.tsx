@@ -1,7 +1,7 @@
 import { getTranslations, setRequestLocale } from 'next-intl/server';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
-import { BookOpen, Check, Clock, Lock, PlayCircle, Radio, Users } from 'lucide-react';
+import { BookOpen, Check, Clock, Lock, PlayCircle, Users } from 'lucide-react';
 import { Link } from '@/i18n/navigation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -9,7 +9,7 @@ import { CourseCard } from '@/components/marketing/CourseCard';
 import { CursusProgramme } from '@/components/marketing/CursusProgramme';
 import { PlanningTarifs } from '@/components/marketing/PlanningTarifs';
 import { InfoCarousel } from '@/components/courses/InfoCarousel';
-import { ClassPicker } from '@/components/courses/ClassPicker';
+import { ClassPicker, type ClassSession } from '@/components/courses/ClassPicker';
 import { CheckoutFlow } from '@/components/checkout/CheckoutFlow';
 import { getCourse, getInstructor, relatedCourses } from '@/lib/data/courses';
 import { listClassesForStudent } from '@/lib/data/classes';
@@ -125,7 +125,6 @@ export default async function CoursePage({
   const tCommon = await getTranslations('common');
   const tMeta = await getTranslations('meta');
   const tNav = await getTranslations('nav');
-  const tLive = await getTranslations('live');
 
   const [instructor, related, onSite, online, cursusList, liveSessions] = await Promise.all([
     getInstructor(course.instructor_id),
@@ -133,7 +132,10 @@ export default async function CoursePage({
     listProducts('presentiel'),
     listProducts('online'),
     listCursus(),
-    listLiveSessions(course.id),
+    // Read through RLS: a student gets their own class's sessions and no
+    // other's, staff get every class's. A visitor holds no class, so the
+    // query is not even made.
+    owned ? listLiveSessions(course.id) : Promise.resolve([]),
   ]);
 
   // This module's own price lines, in both modes, for the Planning & Tarifs
@@ -177,7 +179,27 @@ export default async function CoursePage({
   // any cursus lists it, which is exactly what used to fail in silence.
   const { free: freeModes, paid: paidModes } = moduleRoutes(entries);
 
-  const upcoming = liveSessions.filter((s) => s.status === 'scheduled' || s.status === 'live');
+  // Each upcoming session, filed under the class it is taught to. The module
+  // page has no list of its own: a session belongs to one group, so it is
+  // shown inside that group's card and nowhere else. Live first, then the
+  // next one due.
+  const when = new Intl.DateTimeFormat(locale, { dateStyle: 'full', timeStyle: 'short' });
+  const sessionsByClass: Record<string, ClassSession[]> = {};
+  for (const session of liveSessions
+    .filter((s) => s.status === 'scheduled' || s.status === 'live')
+    .sort(
+      (a, b) =>
+        Number(b.status === 'live') - Number(a.status === 'live') ||
+        (a.scheduledAt ?? '9999').localeCompare(b.scheduledAt ?? '9999'),
+    )) {
+    (sessionsByClass[session.classId] ??= []).push({
+      id: session.id,
+      title: session.title,
+      href: `/live/${session.roomToken}`,
+      live: session.status === 'live',
+      when: session.scheduledAt ? when.format(new Date(session.scheduledAt)) : null,
+    });
+  }
   const lessons = lessonCount(course);
   const hasDepartment = course.department !== '' || course.department_body !== '';
 
@@ -571,68 +593,9 @@ export default async function CoursePage({
                 classes={myClasses.classes}
                 myClassId={myClasses.myClassId}
                 enterHref={enterHref}
+                sessions={sessionsByClass}
               />
             </div>
-          </div>
-        </section>
-      )}
-
-      {/* The live sessions scheduled against this module.
-          `live_sessions` is readable only by staff and by a student who holds
-          the module and sits in the session's class, so this section simply is
-          not here for a visitor who has not enrolled — the list is empty
-          because the database answered empty, not because the page decided to
-          hide it. */}
-      {upcoming.length > 0 && (
-        <section className="bg-surface/60 py-14 sm:py-16">
-          <div className="shell max-w-3xl">
-            <h2 className="text-center font-display text-[clamp(1.5rem,3.4vw,2rem)] font-semibold text-gold-600">
-              {t('detail.liveTitle')}
-            </h2>
-            <p className="mt-3 text-center text-[13px] leading-relaxed text-ink-muted">
-              {t('detail.liveLead')}
-            </p>
-
-            <ul className="mt-8 space-y-3">
-              {upcoming.map((session) => (
-                <li
-                  key={session.id}
-                  className="flex flex-wrap items-center gap-4 rounded-[var(--radius-card)] border border-line bg-white p-5"
-                >
-                  <span
-                    className={cn(
-                      'flex size-10 shrink-0 items-center justify-center rounded-full',
-                      session.status === 'live'
-                        ? 'bg-red-600 text-white'
-                        : 'bg-gold-50 text-gold-600',
-                    )}
-                    aria-hidden="true"
-                  >
-                    <Radio className="size-5" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="font-display text-[15px] font-semibold text-ink">
-                      {session.title}
-                    </p>
-                    <p className="mt-0.5 text-[12px] text-ink-muted">
-                      {session.status === 'live'
-                        ? t('detail.liveNow')
-                        : session.scheduledAt
-                          ? new Intl.DateTimeFormat(locale, {
-                              dateStyle: 'full',
-                              timeStyle: 'short',
-                            }).format(new Date(session.scheduledAt))
-                          : t('detail.liveScheduled')}
-                    </p>
-                  </div>
-                  {/* Entry is decided again at the door by `can_join_live`,
-                      which also refuses a banned student and an ended room. */}
-                  <Button asChild size="sm" variant="outline">
-                    <Link href={`/live/${session.roomToken}`}>{tLive('joinNow')}</Link>
-                  </Button>
-                </li>
-              ))}
-            </ul>
           </div>
         </section>
       )}

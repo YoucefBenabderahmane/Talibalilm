@@ -67,6 +67,9 @@ export async function UpcomingClasses({
                 </div>
                 <p className="text-[11px] text-ink-muted">
                   {session.courseTitle}
+                  {/* The group it is taught to: a student only ever sees their
+                      own here, staff see which class each session belongs to. */}
+                  {session.classTitle && ` · ${session.classTitle}`}
                   {session.scheduledAt && ` · ${when.format(new Date(session.scheduledAt))}`}
                 </p>
               </div>
