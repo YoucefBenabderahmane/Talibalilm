@@ -166,19 +166,42 @@ let document_: DocumentProxy | null = null;
 /** The loading task owns the engine: `destroy()` is what shuts it down. */
 let task_: { destroy: () => Promise<void> } | null = null;
 let baseName = 'slide';
+/** The open document's file and engine (an index into ENGINES), kept to reopen it. */
+let file_: File | null = null;
+let engine_ = -1;
+/** Bumped each time the document is swapped, so a render started on the old one retries. */
+let generation_ = 0;
+let reopening: Promise<void> | null = null;
 
 /**
- * Open one document, modern engine first.
+ * Whether this browser has the JavaScript the modern build draws with.
+ *
+ * pdf.js 6's modern build calls `Map.prototype.getOrInsertComputed` while
+ * drawing every page. A browser without it OPENS the file on that build and
+ * then fails every single page (« getOrInsertComputed is not a function ») — a
+ * live deck with nothing on it. The legacy build carries the polyfill, so such
+ * a browser starts there.
+ */
+function modernRuns(): boolean {
+  return (
+    typeof (Map.prototype as { getOrInsertComputed?: unknown }).getOrInsertComputed === 'function'
+  );
+}
+
+/**
+ * Open one document, modern engine first where the browser can run it.
  *
  * Same order as the main-thread path: the modern build is measurably faster and
  * the legacy one is there for browsers a year or two old. A file problem is the
  * teacher's; the caller sees it as an error either way and the main thread can
  * still take over.
  */
-async function open(file: File): Promise<number> {
+async function open(file: File, from = 0): Promise<number> {
   let lastError: unknown = null;
 
-  for (const engine of ENGINES) {
+  for (let index = from; index < ENGINES.length; index++) {
+    if (index === 0 && !modernRuns()) continue;
+    const engine = ENGINES[index]!;
     let pdfjs: PdfModule;
     try {
       pdfjs = (await engine.load()) as unknown as PdfModule;
@@ -205,6 +228,8 @@ async function open(file: File): Promise<number> {
       const opened = await task.promise;
       document_ = opened;
       task_ = task;
+      file_ = file;
+      engine_ = index;
       return opened.numPages;
     } catch (thrown) {
       lastError = thrown;
@@ -212,6 +237,38 @@ async function open(file: File): Promise<number> {
   }
 
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+/**
+ * Draw on the legacy build when the modern one turns out to lack something.
+ *
+ * `modernRuns` catches the gap known today; this catches the next one. A
+ * TypeError from the modern build is a missing browser feature, not a file
+ * problem: the document is reopened once on the legacy build and the page is
+ * drawn again there, as is every page after it. A render that was running on
+ * the old document while it was swapped is simply drawn again.
+ */
+async function withFallback<T>(draw: () => Promise<T>): Promise<T> {
+  const generation = generation_;
+  try {
+    return await draw();
+  } catch (thrown) {
+    if (generation !== generation_) {
+      await reopening;
+      return draw();
+    }
+    if (!(thrown instanceof TypeError) || engine_ !== 0 || !file_) throw thrown;
+    reopening ??= (async () => {
+      const old = task_;
+      generation_++;
+      document_ = null;
+      task_ = null;
+      if (old) await old.destroy().catch(() => {});
+      await open(file_!, 1);
+    })();
+    await reopening;
+    return draw();
+  }
 }
 
 /**
@@ -343,7 +400,7 @@ scope.onmessage = (event) => {
         return;
       }
       if (message.type === 'render') {
-        const rendered = await renderPage(message.page, message.width);
+        const rendered = await withFallback(() => renderPage(message.page, message.width));
         if (rendered) {
           post({
             type: 'rendered',
@@ -358,7 +415,9 @@ scope.onmessage = (event) => {
         return;
       }
       if (message.type === 'bitmap') {
-        const bitmap = await renderBitmap(message.page, message.width, message.height);
+        const bitmap = await withFallback(() =>
+          renderBitmap(message.page, message.width, message.height),
+        );
         if (bitmap) {
           post({ type: 'bitmap', id: message.id, page: message.page, bitmap }, [bitmap]);
         } else {
