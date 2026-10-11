@@ -73,6 +73,8 @@ harness does not have).
   where the paywall is proven. Needs any reachable Postgres 15+.
 - `npm run test:prisma` — Prisma RLS, from a role carrying `BYPASSRLS`.
 - `npm run test:e2e` — Playwright against a production build.
+- `npm run test:browser` — the class recorder in a real Chromium with a fake
+  camera (canvas capture, MediaRecorder, IndexedDB exist nowhere else).
 
 A change to the schema or the money paths without a failing-then-passing test
 has not been demonstrated.
@@ -94,9 +96,18 @@ about.** Slides are PUT straight from the browser to Cloudflare — deliberately
 so no slide is streamed through a Vercel function — which makes every upload a
 cross-origin request. Without a CORS policy on the bucket the browser reports
 only "failed to fetch", naming nothing, and the four `R2_*` variables all look
-correctly set. The policy is in `.env.example` beside them; `PUT` and
-`content-type` are all it needs, because slides are displayed with a plain
-`<img>` and those are not CORS-checked.
+correctly set. The policy is in `.env.example` beside them: `PUT` for the
+upload, and `GET` for the recording.
+
+**Never draw an image the page cannot read into the recording canvas.** One
+R2 slide drawn without CORS taints the canvas, Chrome mutes the captured
+track, and the file stops gaining picture for the rest of the class while the
+button still says "recording" — other browsers stop the recorder outright.
+That is how « Reprendre » came to resume nothing in October 2026. Slides load
+through `CorsImage` (CORS first, plain fallback), and the recorder checks every
+element with `drawDecision` (`@/lib/live/recording/drawable`) before drawing.
+`tests/browser/recorder.spec.ts` (`npm run test:browser`) proves it in a real
+Chromium; keep it green.
 
 The site's public origin lives in exactly one place — `NEXT_PUBLIC_SITE_URL`,
 read through `siteUrl()`; there is no domain string in `src/`. But six external

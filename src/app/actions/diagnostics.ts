@@ -2,7 +2,13 @@
 
 import { requireAdmin } from '@/lib/auth/guards';
 import { corsProbeKey, CORS_PROBE_KEY_PATTERN, slideName } from '@/lib/storage/key';
-import { deleteObject, r2Configured, readObjectHead, signUpload } from '@/lib/storage/r2';
+import {
+  deleteObject,
+  r2Configured,
+  readObjectHead,
+  signDownload,
+  signUpload,
+} from '@/lib/storage/r2';
 import { smtpCandidates, type SmtpCandidate } from '@/lib/email/send';
 import type { AdminState } from '@/app/actions/admin';
 
@@ -21,6 +27,8 @@ import type { AdminState } from '@/app/actions/admin';
 export interface CorsTicket extends AdminState {
   url?: string;
   key?: string;
+  /** A signed GET for the same object: the read the class recorder needs. */
+  readUrl?: string;
 }
 
 /**
@@ -39,8 +47,9 @@ export async function startCorsProbe(): Promise<CorsTicket> {
   const key = corsProbeKey(slideName());
   const url = await signUpload(key, 'application/octet-stream', 120);
   if (!url) return { ok: false, error: 'storageUnavailable' };
+  const readUrl = await signDownload(key, 120);
 
-  return { ok: true, url, key };
+  return { ok: true, url, key, ...(readUrl ? { readUrl } : {}) };
 }
 
 /**
