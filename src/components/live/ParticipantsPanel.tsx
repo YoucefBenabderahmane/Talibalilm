@@ -1,7 +1,7 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { Hand, Mic, MicOff, MonitorUp, UserMinus, UserPlus } from 'lucide-react';
+import { Hand, Mic, MicOff, MonitorUp, Presentation, UserMinus, UserPlus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { RoomPerson } from './useRoom';
 
@@ -34,16 +34,21 @@ export type HostAction =
 export function ParticipantsPanel({
   people,
   isHost,
+  staged,
   removed,
   onAction,
+  onStage,
   onRestore,
   onClearAsk,
 }: {
   people: RoomPerson[];
   isHost: boolean;
+  /** Identity of the student currently on the big stage, or null. */
+  staged: string | null;
   /** Removed from the class and not back yet — from the attendance record. */
   removed: { userId: string; name: string }[];
   onAction: (identity: string, action: HostAction) => void;
+  onStage: (identity: string | null) => void;
   onRestore: (userId: string) => void;
   onClearAsk: (identity: string) => void;
 }) {
@@ -164,6 +169,28 @@ export function ParticipantsPanel({
                     <MonitorUp className="size-3.5" />
                     <span className="sr-only">
                       {person.sharing ? t('denyScreen') : t('allowScreen')}
+                    </span>
+                  </button>
+
+                  {/* One student at a time on the big box, the teacher's
+                      choice — the same place the microphone and the screen
+                      are decided, so the panel reads as one row of controls
+                      per person. */}
+                  <button
+                    type="button"
+                    title={person.identity === staged ? t('studentMinimize') : t('studentOnStage')}
+                    onClick={() =>
+                      onStage(person.identity === staged ? null : person.identity)
+                    }
+                    className={cn(
+                      icon,
+                      'text-white/60 hover:bg-white/10 hover:text-white',
+                      person.identity === staged && 'bg-brand-500/20 text-brand-200',
+                    )}
+                  >
+                    <Presentation className="size-3.5" />
+                    <span className="sr-only">
+                      {person.identity === staged ? t('studentMinimize') : t('studentOnStage')}
                     </span>
                   </button>
 

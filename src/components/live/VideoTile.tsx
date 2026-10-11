@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useRef } from 'react';
 import { useTranslations } from 'next-intl';
-import { Track, type Participant, type TrackPublication } from 'livekit-client';
+import { Track, type Participant } from 'livekit-client';
 import { Hand, Mic, MicOff, MonitorUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useAttachedTrack } from './useAttachedTrack';
 import type { RoomPerson } from './useRoom';
 
 /**
@@ -39,23 +40,7 @@ export function VideoTile({
   const t = useTranslations('live');
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    const attach = () => {
-      const pub: TrackPublication | undefined = participant.getTrackPublication(source);
-      if (pub?.track) pub.track.attach(video);
-    };
-    attach();
-
-    const id = window.setInterval(attach, 1000); // Cheap resync when a track arrives late.
-    return () => {
-      window.clearInterval(id);
-      const pub = participant.getTrackPublication(source);
-      pub?.track?.detach(video);
-    };
-  }, [participant, source]);
+  useAttachedTrack(participant, source, videoRef);
 
   const initials = (person.name || '?')
     .split(/\s+/)
