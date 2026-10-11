@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { useRouter } from '@/i18n/navigation';
+import { Link, useRouter } from '@/i18n/navigation';
 import { useTranslations } from 'next-intl';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Radio } from 'lucide-react';
 import { joinClass, leaveClass } from '@/app/actions/classes';
 import { cn } from '@/lib/utils';
 import type { StudentClass } from '@/lib/data/classes';
@@ -14,6 +14,16 @@ const MESSAGE: Record<string, 'classNotAllowed' | 'classSaveFailed' | 'classUnav
   saveFailed: 'classSaveFailed',
   unavailable: 'classUnavailable',
 };
+
+/** One upcoming live session, as its class card lists it. */
+export interface ClassSession {
+  id: string;
+  title: string;
+  href: string;
+  live: boolean;
+  /** Already formatted by the server, so the page and the browser agree. */
+  when: string | null;
+}
 
 /**
  * The student's own group, on the module they hold.
@@ -28,16 +38,24 @@ const MESSAGE: Record<string, 'classNotAllowed' | 'classSaveFailed' | 'classUnav
  * moves them: the action leaves the old class and joins the new one, both as
  * the student. Until they are in a class, the module's live sessions are not
  * theirs to see (`live_sessions` is class-scoped now).
+ *
+ * A class's live sessions are listed inside its own card, and nowhere else on
+ * the module page: a session is taught to one group. The list comes through
+ * RLS, so a student only ever has their own class's sessions to show; staff
+ * see each class with its own sessions under it.
  */
 export function ClassPicker({
   classes,
   myClassId,
   enterHref,
+  sessions = {},
 }: {
   classes: StudentClass[];
   myClassId: string | null;
   /** Where entering the module lands: its first lesson, or the module itself. */
   enterHref: string;
+  /** Upcoming live sessions by class id — only the ones this viewer may see. */
+  sessions?: Record<string, ClassSession[]>;
 }) {
   const t = useTranslations('courses');
   const router = useRouter();
@@ -80,6 +98,7 @@ export function ClassPicker({
       <ul className="grid gap-3 sm:grid-cols-2">
         {classes.map((klass) => {
           const mine = klass.id === myClassId;
+          const classSessions = sessions[klass.id] ?? [];
           return (
             <li key={klass.id}>
               <button
@@ -112,6 +131,54 @@ export function ClassPicker({
                   </span>
                 )}
               </button>
+
+              {/* Siblings of the card, not inside it: a link inside a button
+                  is invalid and the click would choose the class instead. */}
+              {classSessions.length > 0 && (
+                <div className="mt-2 rounded-[var(--radius-card)] border border-line bg-white p-3">
+                  <p className="text-[11px] font-semibold tracking-wide text-gold-600 uppercase">
+                    {t('detail.liveTitle')}
+                  </p>
+                  <ul className="mt-2 space-y-2">
+                    {classSessions.map((session) => (
+                      <li key={session.id} className="flex items-center gap-3">
+                        <span
+                          className={cn(
+                            'flex size-8 shrink-0 items-center justify-center rounded-full',
+                            session.live ? 'bg-red-600 text-white' : 'bg-gold-50 text-gold-600',
+                          )}
+                          aria-hidden="true"
+                        >
+                          <Radio className="size-4" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[13px] font-semibold text-ink">
+                            {session.title}
+                          </span>
+                          <span className="block text-[11px] text-ink-muted">
+                            {session.live
+                              ? t('detail.liveNow')
+                              : (session.when ?? t('detail.liveScheduled'))}
+                          </span>
+                        </span>
+                        {/* Entry is decided again at the door by
+                            `can_join_live`, which also checks the class. */}
+                        <Link
+                          href={session.href}
+                          className={cn(
+                            'shrink-0 rounded-full px-3 py-1.5 text-[12px] font-medium transition-colors',
+                            session.live
+                              ? 'bg-red-600 text-white hover:bg-red-700'
+                              : 'border border-line text-ink hover:border-brand-300',
+                          )}
+                        >
+                          {t('detail.liveJoin')}
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </li>
           );
         })}
