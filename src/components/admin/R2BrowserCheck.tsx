@@ -28,11 +28,14 @@ const IDLE: AdminState = { ok: false };
 export function R2BrowserCheck() {
   const t = useTranslations('admin');
   const [state, setState] = useState<AdminState>(IDLE);
+  /** The GET half: can the room read a slide back under CORS, for the recording? */
+  const [read, setRead] = useState<'ok' | 'blocked' | null>(null);
   const [busy, setBusy] = useState(false);
 
   const run = async () => {
     setBusy(true);
     setState(IDLE);
+    setRead(null);
     try {
       const ticket = await startCorsProbe();
       if (!ticket.ok || !ticket.url || !ticket.key) {
@@ -73,6 +76,18 @@ export function R2BrowserCheck() {
         return;
       }
 
+      // The same read the classroom makes for each slide (crossOrigin
+      // "anonymous"): a TypeError here is the browser refusing it under CORS,
+      // which is exactly what keeps slides out of the recording.
+      if (ticket.readUrl) {
+        try {
+          const response = await fetch(ticket.readUrl, { mode: 'cors', cache: 'no-store' });
+          setRead(response.ok ? 'ok' : 'blocked');
+        } catch {
+          setRead('blocked');
+        }
+      }
+
       setState(await finishCorsProbe({ key: ticket.key }));
     } finally {
       setBusy(false);
@@ -97,6 +112,17 @@ export function R2BrowserCheck() {
       </Button>
 
       <ActionError state={state} />
+      {read === 'ok' && (
+        <p role="status" className="mt-2 flex items-start gap-2 text-[12px] text-brand-700">
+          <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+          <span>{t('diagBrowserReadOk')}</span>
+        </p>
+      )}
+      {read === 'blocked' && (
+        <p role="alert" className="mt-2 text-[12px] leading-relaxed text-red-700">
+          {t('diagBrowserReadBlocked', { origin: window.location.origin })}
+        </p>
+      )}
       {state.ok && (
         <p role="status" className="mt-2 flex items-start gap-2 text-[12px] text-brand-700">
           <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />

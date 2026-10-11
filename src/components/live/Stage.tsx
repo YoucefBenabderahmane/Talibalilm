@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { CorsImage } from './CorsImage';
 import { useTranslations } from 'next-intl';
 import { ChevronLeft, ChevronRight, Loader2, Maximize2, Minimize2 } from 'lucide-react';
 import { Track, type Participant, type Room } from 'livekit-client';
@@ -356,8 +357,9 @@ function SlideStage({
           drag.current = null;
         }}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element -- a signed URL that expires, and a transform the optimizer cannot carry */}
-        <img
+        {/* Loaded under CORS when the bucket allows it, so the recording can
+            include the slide; see CorsImage. */}
+        <CorsImage
           src={src}
           alt=""
           draggable={false}

@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { CorsImage } from './CorsImage';
 import { useTranslations } from 'next-intl';
 import {
   ChevronLeft,
@@ -231,8 +232,9 @@ export function SlidesPanel({
                 >
                   <span className="relative block aspect-video bg-ink">
                     {slide.url && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
+                      // Same CORS load as the stage, so the cache never holds a
+                      // plain copy that would make the stage's CORS load fail.
+                      <CorsImage
                         src={slide.url}
                         alt={slide.filename}
                         loading="lazy"

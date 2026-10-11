@@ -25,6 +25,7 @@ import { SharePip } from './SharePip';
 import { RemoteAudio } from './RemoteAudio';
 import { useSlideUpload } from './useSlideUpload';
 import { useRecorder } from './useRecorder';
+import { RecorderNotices } from './RecorderNotices';
 import {
   clearBoard as clearBoardAction,
   controlParticipant,
@@ -341,6 +342,41 @@ export function Classroom({
     recordingActive.current = recorder.state !== 'idle';
   }, [recorder.state]);
 
+  // The class is told when the recording starts and when it ends — including
+  // when it ends on its own (a failure saved what it had), not only when the
+  // teacher presses « Arrêter ».
+  const announcedRecording = useRef(false);
+  useEffect(() => {
+    if (!isHost || roomStatus !== 'connected') return;
+    const on = recorder.state === 'recording' || recorder.state === 'paused';
+    if (on === announcedRecording.current) return;
+    announcedRecording.current = on;
+    sendToRoom({ t: 'rec', on });
+  }, [isHost, roomStatus, sendToRoom, recorder.state]);
+
+  // Closing the tab mid-recording asks first. The disk copy would survive it,
+  // but a teacher should not have to rely on recovery for a slip of the hand.
+  const recordingNow = recorder.state !== 'idle';
+  /** Set by the room's own buttons once the file is saved: no second question. */
+  const leaving = useRef(false);
+  useEffect(() => {
+    if (!recordingNow) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (leaving.current) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [recordingNow]);
+
+  /** Save the file before the page goes away, whichever button sends it away. */
+  const leaveTo = async (href: string) => {
+    if (recorder.state !== 'idle') await recorder.stop();
+    leaving.current = true;
+    window.location.assign(href);
+  };
+
   // History arrives from the database, already filtered by the same policies
   // that guard the room, so a late joiner sees the lesson so far.
   useEffect(() => {
@@ -560,6 +596,10 @@ export function Classroom({
 
   const endClass = async () => {
     if (!window.confirm(t('endConfirm'))) return;
+    // The recording is saved first: ending the class used to navigate away
+    // with the whole lesson still in memory.
+    if (recorder.state !== 'idle') await recorder.stop();
+    leaving.current = true;
     live.send({ t: 'ended' });
     await endLiveSessionById(sessionId);
     window.location.assign('/admin/live');
@@ -604,9 +644,21 @@ export function Classroom({
             </p>
           )}
 
+          {/* The room is gone but the recording is not: it is saved before
+              anything reloads the page. */}
+          {isHost && recorder.state !== 'idle' && (
+            <button
+              type="button"
+              onClick={() => void recorder.stop()}
+              className="mt-5 me-2 rounded-full bg-red-500 px-5 py-2 text-[13px] text-white transition-colors hover:bg-red-600"
+            >
+              {t('recordSaveNow')}
+            </button>
+          )}
+
           <button
             type="button"
-            onClick={() => window.location.reload()}
+            onClick={() => void leaveTo(window.location.href)}
             className="mt-5 rounded-full bg-white/10 px-5 py-2 text-[13px] text-white transition-colors hover:bg-white/20"
           >
             {t('retry')}
@@ -753,6 +805,18 @@ export function Classroom({
         )}
       </header>
 
+      {isHost && (
+        <RecorderNotices
+          issue={recorder.issue}
+          warnings={recorder.warnings}
+          part={recorder.part}
+          recovered={recorder.state === 'idle' ? recorder.recovered : []}
+          onDismiss={recorder.dismissIssue}
+          onDownloadRecovered={(id) => void recorder.downloadRecovered(id)}
+          onDiscardRecovered={(id) => void recorder.discardRecovered(id)}
+        />
+      )}
+
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           {/* The recorder reads its picture from inside here, so whatever is on
@@ -839,16 +903,13 @@ export function Classroom({
               onAskCamera={() => live.send({ t: 'ask', what: 'camera' })}
               onAskScreen={() => live.send({ t: 'ask', what: 'screen' })}
               onRecord={() => {
-                if (recorder.state === 'idle') {
-                  void recorder.start();
-                  live.send({ t: 'rec', on: true });
-                } else {
-                  recorder.stop();
-                  live.send({ t: 'rec', on: false });
-                }
+                // The class hears about it from the effect above, which also
+                // covers a recording that ends on its own.
+                if (recorder.state === 'idle') void recorder.start();
+                else void recorder.stop();
               }}
               onPauseRecord={recorder.togglePause}
-              onLeave={() => window.location.assign(isHost ? '/admin/live' : '/dashboard')}
+              onLeave={() => void leaveTo(isHost ? '/admin/live' : '/dashboard')}
               onEnd={() => void endClass()}
             />
           </div>
