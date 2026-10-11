@@ -34,6 +34,14 @@ export interface RoomGrant {
   canSubscribe: true;
   canPublish: boolean;
   canPublishData: boolean;
+  /**
+   * The sources LiveKit accepts from this person. EMPTY means "no restriction"
+   * to LiveKit when `canPublish` is true — the host's grant, and the only way
+   * to let her publish the live deck's track: it uses LiveKit's `Unknown`
+   * source, which a token cannot name (the SDK refuses to sign it, and the
+   * teacher could not join at all). A student's list is never empty while
+   * `canPublish` is true.
+   */
   canPublishSources: TrackSource[];
   /** Never granted to a student. Room admin can mute and remove anyone. */
   roomAdmin: boolean;
@@ -59,7 +67,8 @@ export function roomGrant(room: string, p: RoomPermissions): RoomGrant {
       canSubscribe: true,
       canPublish: true,
       canPublishData: true,
-      canPublishSources: ['camera', 'microphone', 'screen_share', 'screen_share_audio'],
+      // No restriction: camera, microphone, screen share, and the live deck.
+      canPublishSources: [],
       roomAdmin: true,
     };
   }

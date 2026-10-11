@@ -8,8 +8,10 @@ describe('roomGrant — the host', () => {
   it('may publish everything and administer the room', () => {
     const g = roomGrant(ROOM, { ...student, isHost: true });
     expect(g.roomAdmin).toBe(true);
-    expect(g.canPublishSources).toContain('camera');
-    expect(g.canPublishSources).toContain('screen_share');
+    // An empty list with canPublish is LiveKit's "no restriction": camera,
+    // microphone, screen share, and the live deck's own track.
+    expect(g.canPublish).toBe(true);
+    expect(g.canPublishSources).toEqual([]);
   });
 
   it('keeps its powers even if the room muted them', () => {
@@ -22,7 +24,8 @@ describe('roomGrant — the host', () => {
       screenAllowed: false,
     });
     expect(g.roomAdmin).toBe(true);
-    expect(g.canPublishSources).toContain('microphone');
+    expect(g.canPublish).toBe(true);
+    expect(g.canPublishSources).toEqual([]);
   });
 });
 
@@ -76,5 +79,20 @@ describe('roomGrant — a student', () => {
     const g = roomGrant(ROOM, student);
     expect(g.room).toBe(ROOM);
     expect(g.room).not.toContain('*');
+  });
+});
+
+describe('roomGrant — no student is ever unrestricted', () => {
+  it('never pairs canPublish with an empty source list', () => {
+    // Empty means "anything" to LiveKit — the host's grant. A student given
+    // it could publish whatever they liked, the live deck's track included.
+    for (const muted of [false, true]) {
+      for (const cameraAllowed of [false, true]) {
+        for (const screenAllowed of [false, true]) {
+          const g = roomGrant(ROOM, { isHost: false, muted, cameraAllowed, screenAllowed });
+          if (g.canPublish) expect(g.canPublishSources.length).toBeGreaterThan(0);
+        }
+      }
+    }
   });
 });

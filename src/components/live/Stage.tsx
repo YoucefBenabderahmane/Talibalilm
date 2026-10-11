@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { CorsImage } from './CorsImage';
 import { useTranslations } from 'next-intl';
 import {
   ChevronLeft,
@@ -17,6 +18,16 @@ import { SharePip } from './SharePip';
 import { StageCamera } from './StageCamera';
 import { VideoTile } from './VideoTile';
 import type { RoomPerson } from './useRoom';
+
+/**
+ * What the slide area holds: a page of the uploaded deck, or a page of the
+ * teacher's live deck — her own canvas on her screen, the "slides" video track
+ * on everyone else's. Both get the same zoom, fullscreen and pager.
+ */
+export type SlideContent =
+  | { kind: 'image'; src: string }
+  /** `key` names the page, so a zoom made on one page does not carry to the next. */
+  | { kind: 'live'; key: string; node: ReactNode };
 
 /**
  * What the class is looking at.
@@ -50,8 +61,8 @@ export function Stage({
   people: RoomPerson[];
   /** Identity of whoever is sharing a screen, if anyone. */
   presenting: string | null;
-  /** The current slide's image, when the teacher is presenting the deck. */
-  slide: string | null;
+  /** The current slide, when the teacher is presenting the deck. */
+  slide: SlideContent | null;
   /** The host alone gets the pager and the keyboard. */
   canPresent: boolean;
   slideIndex: number;
@@ -137,7 +148,7 @@ export function Stage({
           })()
         ) : slide ? (
           <SlideStage
-            src={slide}
+            content={slide}
             canPresent={canPresent}
             index={slideIndex}
             total={slideTotal}
@@ -237,13 +248,13 @@ export function Stage({
  * slide.
  */
 function SlideStage({
-  src,
+  content,
   canPresent,
   index,
   total,
   onGo,
 }: {
-  src: string;
+  content: SlideContent;
   canPresent: boolean;
   index: number;
   total: number;
@@ -289,9 +300,10 @@ function SlideStage({
   };
 
   // A zoom belongs to the page it was made on. The next page opens fitted.
+  const page = content.kind === 'image' ? content.src : content.key;
   useEffect(() => {
     setView({ scale: 1, x: 0, y: 0 });
-  }, [src]);
+  }, [page]);
 
   // The box follows the deck: paging with the arrows or the keyboard updates
   // it, and typing never fights that because it only changes while unfocused
@@ -401,15 +413,25 @@ function SlideStage({
           drag.current = null;
         }}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element -- a signed URL that expires, and a transform the optimizer cannot carry */}
-        <img
-          src={src}
-          alt=""
-          draggable={false}
-          data-record="main"
-          className="size-full object-contain select-none"
-          style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
-        />
+        {content.kind === 'image' ? (
+          // Loaded under CORS when the bucket allows it, so the recording can
+          // include the slide; see CorsImage.
+          <CorsImage
+            src={content.src}
+            alt=""
+            draggable={false}
+            data-record="main"
+            className="size-full object-contain select-none"
+            style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
+          />
+        ) : (
+          <div
+            className="size-full"
+            style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
+          >
+            {content.node}
+          </div>
+        )}
 
         {(canPresent || view.scale > 1) && (
           <div className="absolute end-3 top-3 flex flex-col items-end gap-2">

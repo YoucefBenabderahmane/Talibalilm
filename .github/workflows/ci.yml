@@ -21,6 +21,21 @@ jobs:
       - run: npm run lint
       - run: npm test
 
+  browser:
+    runs-on: ubuntu-latest
+    # The class recorder only exists in a browser — canvas capture,
+    # MediaRecorder, IndexedDB — so it is tested in Chromium with a fake camera
+    # and microphone. No app server, no database: about a minute.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+
   rls:
     runs-on: ubuntu-latest
     # The policy tests are the ones that would catch a privilege escalation, so
