@@ -28,6 +28,8 @@ export type RecorderIssueCode =
   | 'unsupported'
   /** The browser's recorder failed mid-lesson; what existed was saved. */
   | 'recorderFailed'
+  /** The file could not be handed to the browser; the copy on disk is kept. */
+  | 'saveFailed'
   /** « Pause » / « Reprendre » was refused by the browser. */
   | 'pauseFailed'
   | 'resumeFailed'
@@ -465,7 +467,7 @@ export class RecordingSession {
         if (this.options.store && this.storeId) await this.options.store.markSaved(this.storeId);
       } catch (thrown) {
         // The disk copy stays unsaved, so the room offers it again on reload.
-        this.issue('recorderFailed', true, `saving the file failed: ${errorText(thrown)}`);
+        this.issue('saveFailed', true, errorText(thrown));
       }
     }
 

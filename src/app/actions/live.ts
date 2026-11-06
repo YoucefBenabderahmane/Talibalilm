@@ -435,6 +435,11 @@ export async function endLiveSessionById(sessionId: string): Promise<AdminState>
     .eq('id', sessionId);
   if (error) return { ok: false, error: 'saveFailed', detail: errorDetail(error) };
 
-  revalidatePath('/[locale]/admin/live', 'page');
+  // No revalidatePath here, on purpose. A Server Action that revalidates makes
+  // Next re-render the page it was called from, in the same response — and
+  // this one is called from the class itself, which is now over. The room was
+  // replaced by « Ce cours n’est pas ouvert » under the teacher's hands while
+  // it was still closing. The room navigates to /admin/live with a full page
+  // load right after, which reads the list fresh anyway.
   return OK;
 }

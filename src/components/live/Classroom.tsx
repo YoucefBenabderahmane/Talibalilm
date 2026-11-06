@@ -587,9 +587,25 @@ export function Classroom({
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [recordingNow]);
 
+  /**
+   * Save the recording before anything takes the page away. True when there
+   * was nothing to save or the file has been handed over; false when saving
+   * failed — the room then stays open, the notice above it says why, and the
+   * copy kept on this machine is offered again on reload.
+   */
+  const saveRecording = async (): Promise<boolean> => {
+    if (recorder.state === 'idle') return true;
+    // Stopped while still starting: nothing was recorded, nothing to lose.
+    const hadRecording = recorder.state !== 'starting';
+    const saved = await recorder.stop();
+    if (saved || !hadRecording) return true;
+    window.alert(t('recordNotSaved'));
+    return false;
+  };
+
   /** Save the file before the page goes away, whichever button sends it away. */
   const leaveTo = async (href: string) => {
-    if (recorder.state !== 'idle') await recorder.stop();
+    if (!(await saveRecording())) return;
     leaving.current = true;
     window.location.assign(href);
   };
@@ -867,14 +883,31 @@ export function Classroom({
     await controlParticipant({ ok: true }, form);
   };
 
+  /**
+   * End the class for everyone, in an order that loses nothing.
+   *
+   * The recording first: the lesson is ended only once its file is saved. Then
+   * the server, and only once it has said yes is the class told — a refusal
+   * leaves everyone in the room, with the cause on the teacher's screen,
+   * rather than sending the students away from a class that is still open.
+   */
   const endClass = async () => {
     if (!window.confirm(t('endConfirm'))) return;
-    // The recording is saved first: ending the class used to navigate away
-    // with the whole lesson still in memory.
-    if (recorder.state !== 'idle') await recorder.stop();
+    if (!(await saveRecording())) return;
+    // A refusal comes back as a result; a dropped connection as a throw. Both
+    // keep the class open and show the cause.
+    const result = await endLiveSessionById(sessionId).catch((thrown: unknown) => ({
+      ok: false as const,
+      detail: thrown instanceof Error ? thrown.message : String(thrown),
+    }));
+    if (!result.ok) {
+      window.alert(`${t('endFailed')}${result.detail ? `\n\n${result.detail}` : ''}`);
+      return;
+    }
     leaving.current = true;
-    live.send({ t: 'ended' });
-    await endLiveSessionById(sessionId);
+    // The students leave on this message, so it is given a moment to go out
+    // before this page unloads and takes the connection with it.
+    await Promise.race([live.send({ t: 'ended' }), new Promise((r) => setTimeout(r, 1500))]);
     window.location.assign('/admin/live');
   };
 
