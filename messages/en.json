@@ -1342,7 +1342,6 @@
       "tooLarge": "Image too large: 5 MB maximum.",
       "uploadFailed": "The upload failed. Try again.",
       "liveBroadcastFailed": "The slide shows on your screen but could not be sent to the class. The detail below comes from the browser or the class server.",
-      "liveBusy": "“{name}” is still opening: wait for it to finish before dropping another file.",
       "liveDuplicate": "“{name}” is already open in the slides: remove it first to drop it again.",
       "liveFile": "“{name}”: {message}",
       "livePageFailed": "A page of “{name}” could not be shown. Choose it again; if that keeps happening, reopen the file."

@@ -42,7 +42,6 @@ export interface LivePage {
 
 export type LiveDeckError =
   | { code: 'duplicate'; name: string }
-  | { code: 'busy'; name: string }
   | { code: 'convertToPdf' | 'notAnImage'; name: string }
   | { code: 'pdfPassword' | 'pdfCorrupt' | 'pdfEngine' | 'pdfEmpty'; name: string; detail?: string }
   | { code: 'pageFailed'; name: string; detail?: string };
@@ -116,7 +115,17 @@ export function useLiveDeck(sessionId: string, enabled: boolean) {
   const stageCache = useRef(new BitmapCache(STAGE_CACHE));
   const thumbCache = useRef(new BitmapCache(THUMB_CACHE));
   const inFlight = useRef(new Map<string, Promise<ImageBitmap | null>>());
-  const openingRef = useRef<string | null>(null);
+  /**
+   * Opens run one after another, in the order they were asked for: a PDF
+   * dropped while another is still opening waits its turn instead of being
+   * refused, and a reload's restore never interleaves with a new drop.
+   */
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const enqueue = useCallback(<T>(job: () => Promise<T>): Promise<T> => {
+    const run = queue.current.then(job);
+    queue.current = run.catch(() => {});
+    return run;
+  }, []);
 
   // Decided after mount: the server has no OffscreenCanvas to ask.
   useEffect(() => {
@@ -150,7 +159,7 @@ export function useLiveDeck(sessionId: string, enabled: boolean) {
   useEffect(() => {
     if (!supported) return;
     let cancelled = false;
-    void (async () => {
+    void enqueue(async () => {
       await purgeOlderThan(KEEP_MS);
       const stored = await sourcesFor(sessionId);
       for (const row of stored) {
@@ -171,11 +180,11 @@ export function useLiveDeck(sessionId: string, enabled: boolean) {
         }
       }
       if (!cancelled) setRestored(true);
-    })();
+    });
     return () => {
       cancelled = true;
     };
-  }, [supported, sessionId, openOne, rebuild]);
+  }, [supported, sessionId, enqueue, openOne, rebuild]);
 
   // Leaving the room frees the workers and the bitmaps.
   useEffect(
@@ -188,20 +197,9 @@ export function useLiveDeck(sessionId: string, enabled: boolean) {
     [],
   );
 
-  /**
-   * Open dropped files. Resolves with the live index of the first new page, or
-   * null when nothing was added. Refuses a file already open, and a drop while
-   * another file is still opening — the duplicate decks the teacher used to get.
-   */
-  const open = useCallback(
-    async (files: FileList | File[]): Promise<number | null> => {
-      setError(null);
-      const list = Array.from(files);
-      if (openingRef.current) {
-        setError({ code: 'busy', name: openingRef.current });
-        return null;
-      }
-
+  /** Open files one by one; the live index of the first new page, or null. */
+  const openList = useCallback(
+    async (list: File[]): Promise<number | null> => {
       let firstNew: number | null = null;
       for (const file of list) {
         const kind = classifyUpload(file);
@@ -220,7 +218,6 @@ export function useLiveDeck(sessionId: string, enabled: boolean) {
           continue;
         }
 
-        openingRef.current = file.name;
         setOpening(file.name);
         const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
         try {
@@ -247,13 +244,29 @@ export function useLiveDeck(sessionId: string, enabled: boolean) {
             detail,
           });
         } finally {
-          openingRef.current = null;
           setOpening(null);
         }
       }
       return firstNew;
     },
     [openOne, rebuild, sessionId],
+  );
+
+  /**
+   * Open dropped files. Resolves with the live index of the first new page, or
+   * null when nothing was added. Refuses a file that is already open — the
+   * duplicate decks the teacher used to get — and queues a drop that arrives
+   * while another file is still opening.
+   */
+  const open = useCallback(
+    (files: FileList | File[]): Promise<number | null> => {
+      // Copied now: a drop's FileList is emptied once the event is over, and
+      // this drop may have to wait for the one before it.
+      const list = Array.from(files);
+      setError(null);
+      return enqueue(() => openList(list));
+    },
+    [enqueue, openList],
   );
 
   /** A page as a bitmap, for the stage (1080p) or a thumbnail. Cached. */

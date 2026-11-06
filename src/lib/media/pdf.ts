@@ -102,6 +102,23 @@ interface OpenedDocument {
   worker: Worker | null;
 }
 
+/**
+ * Where pdf.js fetches the files it does not bundle: the decoders a scanned
+ * page needs (JPEG 2000, JBIG2), fonts a PDF names without embedding, character
+ * maps and colour profiles. Copied to public/ by scripts/copy-pdfjs-assets.mjs.
+ * Without them a scanned page converts to a blank slide.
+ */
+function helperFiles(version: string) {
+  const base = `${window.location.origin}/pdfjs/${version}/`;
+  return {
+    wasmUrl: `${base}wasm/`,
+    standardFontDataUrl: `${base}standard_fonts/`,
+    cMapUrl: `${base}cmaps/`,
+    cMapPacked: true,
+    iccUrl: `${base}iccs/`,
+  };
+}
+
 /** A file problem is the teacher's to fix; anything else is worth retrying. */
 function fileProblem(thrown: unknown): PdfFailure | null {
   const name = (thrown as { name?: string })?.name ?? '';
@@ -118,7 +135,7 @@ async function openWithWorker(
   // The document binds to whichever worker is in the global slot at the moment
   // it is created, which is how several documents each get their own thread.
   pdfjs.GlobalWorkerOptions.workerPort = worker;
-  const task = pdfjs.getDocument({ data, useWorkerFetch: false });
+  const task = pdfjs.getDocument({ data, useWorkerFetch: false, ...helperFiles(pdfjs.version) });
   return { task, document_: await task.promise, worker };
 }
 
@@ -137,7 +154,7 @@ async function openInline(
   pdfjs.GlobalWorkerOptions.workerPort = null;
   pdfjs.GlobalWorkerOptions.workerSrc = '';
   await engine.inline();
-  const task = pdfjs.getDocument({ data, useWorkerFetch: false });
+  const task = pdfjs.getDocument({ data, useWorkerFetch: false, ...helperFiles(pdfjs.version) });
   return { task, document_: await task.promise, worker: null };
 }
 
