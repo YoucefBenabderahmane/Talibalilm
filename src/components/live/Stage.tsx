@@ -103,10 +103,10 @@ export function Stage({
     .slice(0, 12);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
+    <div className="flex min-h-0 flex-1 flex-col gap-2 p-2">
       <div
         data-record-container
-        className="relative min-h-0 flex-1 overflow-hidden rounded-2xl bg-black/30"
+        className="relative min-h-0 flex-1 overflow-hidden rounded-lg bg-black"
       >
         {sharer && !sharePip ? (
           (() => {
@@ -118,14 +118,14 @@ export function Stage({
                   person={sharer}
                   source={Track.Source.ScreenShare}
                   record="main"
-                  className="size-full rounded-2xl ring-0"
+                  className="size-full rounded-none bg-black ring-0"
                 />
                 {canPresent && (
                   <button
                     type="button"
                     onClick={onMinimizeShare}
                     title={t('shareMinimize')}
-                    className="absolute end-3 top-3 rounded-full bg-ink/75 p-2 text-white/80 transition-colors hover:text-white"
+                    className="absolute end-3 top-3 rounded-md bg-black/60 p-2 text-white/80 transition-colors hover:bg-black/80 hover:text-white"
                   >
                     <Minimize2 className="size-4" aria-hidden="true" />
                     <span className="sr-only">{t('shareMinimize')}</span>
@@ -169,7 +169,7 @@ export function Stage({
                 participant={p}
                 person={host}
                 record="main"
-                className="size-full rounded-2xl ring-0"
+                className="size-full rounded-none ring-0"
               />
             ) : null;
           })()
@@ -192,11 +192,14 @@ export function Stage({
       </div>
 
       {strip.length > 0 && (
+        // A filmstrip of small tiles, as in a meeting app: the lesson keeps the
+        // room, and the strip scrolls sideways once it is full. The automatic
+        // margins centre it without hiding the first tiles when it overflows.
         <ul
           className={cn(
-            'grid shrink-0 gap-2',
-            'grid-cols-3 sm:grid-cols-4 lg:grid-cols-6',
-            '[&>li]:aspect-video',
+            'flex shrink-0 gap-2 overflow-x-auto pb-0.5',
+            '[&>li]:aspect-video [&>li]:w-36 [&>li]:shrink-0 sm:[&>li]:w-44',
+            '[&>li:first-child]:ms-auto [&>li:last-child]:me-auto',
           )}
         >
           {strip.map((person) => {
@@ -212,7 +215,7 @@ export function Stage({
                     type="button"
                     onClick={() => onStage(person.identity)}
                     title={t('studentOnStage')}
-                    className="absolute end-1.5 top-1.5 rounded-lg bg-ink/75 p-1.5 text-white/80 transition-colors hover:bg-ink hover:text-white"
+                    className="absolute end-1.5 top-1.5 rounded-md bg-black/60 p-1.5 text-white/80 transition-colors hover:bg-black/80 hover:text-white"
                   >
                     <Presentation className="size-3.5" aria-hidden="true" />
                     <span className="sr-only">{t('studentOnStage')}</span>
@@ -441,7 +444,7 @@ function SlideStage({
                 onClick={toggleFullscreen}
                 title={fullscreen ? t('slideExitFullscreen') : t('slideFullscreen')}
                 aria-pressed={fullscreen}
-                className="rounded-full bg-ink/75 p-2 text-white/80 transition-colors hover:text-white"
+                className="rounded-full bg-black/60 p-2 text-white/80 transition-colors hover:text-white"
               >
                 {fullscreen ? (
                   <Minimize2 className="size-4" aria-hidden="true" />
@@ -459,7 +462,7 @@ function SlideStage({
                 type="button"
                 onClick={() => setView({ scale: 1, x: 0, y: 0 })}
                 title={t('slideZoomReset')}
-                className="rounded-full bg-ink/75 px-3 py-1 text-[11px] text-white/80 transition-colors hover:text-white"
+                className="rounded-full bg-black/60 px-3 py-1 text-[11px] text-white/80 transition-colors hover:text-white"
               >
                 {t('slideZoomReset')} · {Math.round(view.scale * 100)}%
               </button>
@@ -469,7 +472,7 @@ function SlideStage({
       </div>
 
       {canPresent && total > 1 && (
-        <div className="mx-auto my-2 flex shrink-0 items-center gap-1 rounded-full bg-ink/75 px-1.5 py-1 text-white backdrop-blur">
+        <div className="mx-auto my-2 flex shrink-0 items-center gap-1 rounded-full bg-black/60 px-1.5 py-1 text-white backdrop-blur">
           <button
             type="button"
             onClick={() => onGo(Math.max(0, index - 1))}

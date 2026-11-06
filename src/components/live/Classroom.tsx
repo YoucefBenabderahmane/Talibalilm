@@ -7,7 +7,10 @@ import {
   Maximize2,
   MessageSquare,
   Minimize2,
+  Pause,
+  Play,
   PresentationIcon,
+  Square,
   SquarePen,
   Upload,
   Users,
@@ -88,6 +91,11 @@ export function Classroom({
   const isHost = initial.is_host;
 
   const [tab, setTab] = useState<Tab>(isHost ? 'people' : 'chat');
+  /**
+   * The side panel is open. A wide screen opens it on arrival, as the room
+   * always has; a phone starts on the lesson. Either closes it from the panel's
+   * ✕ or its toolbar button, the way a meeting app's chat comes and goes.
+   */
   const [panelOpen, setPanelOpen] = useState(false);
   const [slide, setSlide] = useState(-1);
   /**
@@ -123,6 +131,7 @@ export function Classroom({
   const [syncAsk, setSyncAsk] = useState(0);
   /** Chat lines that arrived while another tab was open. */
   const [unread, setUnread] = useState(0);
+  const panelOpenRef = useRef(false);
 
   const stageRef = useRef<HTMLDivElement | null>(null);
   const deckRef = useRef(deck);
@@ -219,8 +228,9 @@ export function Classroom({
         if (message.stage !== undefined) setStaged(message.stage);
       } else if (message.t === 'chat') {
         // The teacher missed a whole conversation by not noticing the tab;
-        // the badge is the answer to that, not a louder notification.
-        if (tab !== 'chat') setUnread((n) => n + 1);
+        // the badge is the answer to that, not a louder notification. A
+        // closed panel hides the chat as surely as another tab does.
+        if (tab !== 'chat' || !panelOpenRef.current) setUnread((n) => n + 1);
       } else if (message.t === 'deck') {
         // The teacher's deck changed. A live page still on stage is announced
         // again right behind this message; a deck she emptied is not, and the
@@ -235,10 +245,15 @@ export function Classroom({
     [ensureSlideUrl, refreshDeck, tab],
   );
 
-  // Opening the tab is reading it.
+  // Opening the chat is reading it.
   useEffect(() => {
-    if (tab === 'chat') setUnread(0);
-  }, [tab]);
+    panelOpenRef.current = panelOpen;
+    if (tab === 'chat' && panelOpen) setUnread(0);
+  }, [tab, panelOpen]);
+
+  useEffect(() => {
+    if (window.matchMedia('(min-width: 1024px)').matches) setPanelOpen(true);
+  }, []);
 
   const live = useRoom({ roomToken, isHost, onMessage });
   // Pulled out for the effect below: `live` is a fresh object each render, and
@@ -932,7 +947,7 @@ export function Classroom({
     const unreachable = live.error === 'unavailable';
 
     return (
-      <main className="flex min-h-dvh items-center justify-center bg-ink px-6 text-center">
+      <main className="flex min-h-dvh items-center justify-center bg-room px-6 text-center">
         <div className="max-w-md">
           <h1 className="font-display text-xl font-semibold text-white">
             {removedByTeacher
@@ -999,68 +1014,50 @@ export function Classroom({
   };
 
   /**
-   * One strip of tabs, in the two places it lives: across the top of the side
-   * panel on a wide screen, and along the bottom of the stage on a phone,
-   * where a thumb can reach it. The bar opens the sheet; the panel is already
-   * open.
+   * A panel button in the toolbar: opens that panel, or puts it away when it
+   * is the one already open — the way a meeting app's chat and participants
+   * come and go. Switching panels goes through `focusTab`, so the class still
+   * follows the teacher and the deck's links are still minted only on open.
    */
-  const tabStrip = (variant: 'panel' | 'bar') => (
-    <div
-      role="tablist"
-      className={cn(
-        variant === 'panel'
-          ? 'hidden border-b border-white/10 lg:flex'
-          : 'flex border-t border-white/10 lg:hidden',
-      )}
-    >
-      {tabs.map(({ key, label, Icon }) => (
+  const togglePanel = (key: Tab) => {
+    if (panelOpen && tab === key) {
+      setPanelOpen(false);
+      return;
+    }
+    focusTab(key);
+    setPanelOpen(true);
+  };
+
+  const panels = tabs.map(({ key, label, Icon }) => ({
+    key,
+    label,
+    Icon,
+    badge: key === 'chat' ? unread : key === 'people' ? live.people.length : undefined,
+    alert: key === 'chat',
+  }));
+
+  /** Leave and end, for the top bar on a phone, where the toolbar has no room. */
+  const leaveButtons = (
+    <div className="flex shrink-0 items-center gap-1.5 sm:hidden">
+      <button
+        type="button"
+        onClick={() => void leaveTo(isHost ? '/admin/live' : '/dashboard')}
+        className={cn(
+          'rounded-md px-3 py-1.5 text-[12px] font-semibold transition-colors',
+          isHost ? 'bg-room-raised text-white' : 'bg-red-600 text-white',
+        )}
+      >
+        {t('leave')}
+      </button>
+      {isHost && (
         <button
-          key={key}
           type="button"
-          role="tab"
-          aria-selected={tab === key}
-          title={label}
-          onClick={() => {
-            if (variant === 'bar') {
-              // Tapping the open tab again puts the sheet away.
-              if (panelOpen && tab === key) {
-                setPanelOpen(false);
-                return;
-              }
-              // The deck's links are minted when the panel is opened, not when
-              // the room is joined: a viewer who never opens it never pays.
-              focusTab(key);
-              setPanelOpen(true);
-              return;
-            }
-            focusTab(key);
-          }}
-          className={cn(
-            'flex flex-1 items-center justify-center gap-1.5 px-2 py-2.5 text-[12px] transition-colors',
-            variant === 'panel' && 'border-b-2',
-            variant === 'bar' && 'flex-col gap-0.5 py-2 text-[10px]',
-            tab === key
-              ? variant === 'panel'
-                ? 'border-brand-400 text-white'
-                : 'text-brand-300'
-              : 'text-white/50 hover:text-white/80',
-          )}
+          onClick={() => void endClass()}
+          className="rounded-md bg-red-600 px-3 py-1.5 text-[12px] font-semibold text-white"
         >
-          <span className="relative">
-            <Icon className={variant === 'bar' ? 'size-5' : 'size-4'} aria-hidden="true" />
-            {key === 'chat' && unread > 0 && tab !== 'chat' && (
-              <span className="absolute -end-2 -top-1.5 flex size-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-semibold text-white">
-                {unread > 9 ? '9+' : unread}
-              </span>
-            )}
-          </span>
-          {variant === 'panel' ? (
-            <span className="sr-only sm:not-sr-only">{label}</span>
-          ) : (
-            label
-          )}
+          {t('endForAll')}
         </button>
-      ))}
+      )}
     </div>
   );
 
@@ -1077,10 +1074,12 @@ export function Classroom({
 
   return (
     <div
-      // `overflow-hidden` is the room's promise that it is the whole page: the
+      // `overflow-clip` is the room's promise that it is the whole page: the
       // class fills the viewport, and a long unbroken word in the chat must
-      // never turn the white body behind it into a scrollable margin.
-      className="relative flex h-dvh flex-col overflow-hidden bg-ink text-white"
+      // never turn the white body behind it into a scrollable margin. Clip,
+      // not hidden: a hidden box can still be scrolled by script, and a list
+      // scrolling its item into view once slid the whole room 55px sideways.
+      className="relative flex h-dvh flex-col overflow-clip bg-room text-white"
       onDragOver={(event) => {
         if (!event.dataTransfer.types.includes('Files')) return;
         // Swallowed for everyone, so a dropped file never navigates a student
@@ -1100,35 +1099,79 @@ export function Classroom({
         if (files?.length) void addFiles(files);
       }}
     >
-      <header className="flex items-center gap-3 border-b border-white/10 px-4 py-2.5">
-        <h1 className="min-w-0 flex-1 truncate font-display text-[15px] font-semibold">{title}</h1>
+      <header className="flex h-11 shrink-0 items-center gap-3 border-b border-room-line/70 bg-room-bar px-3 sm:px-4">
+        {/* Recording, in the corner where a meeting app shows it, with its
+            pause and stop beside it: the toolbar keeps only « Arrêter », so
+            a narrow screen does not lose the bar to three recording buttons. */}
+        {recorder.state === 'recording' || recorder.state === 'paused' ? (
+          <span className="flex shrink-0 items-center gap-1 rounded-md bg-black/40 py-0.5 ps-2 pe-0.5 text-[11px] font-semibold text-white">
+            <span
+              className={cn(
+                'size-2 rounded-full bg-red-500',
+                recorder.state === 'recording' && 'animate-pulse',
+              )}
+              aria-hidden="true"
+            />
+            <span role="status" className="max-sm:sr-only">
+              {recorder.state === 'paused' ? t('pauseRecording') : t('recording')}
+            </span>
+            {isHost && (
+              <>
+                <button
+                  type="button"
+                  onClick={recorder.togglePause}
+                  title={recorder.state === 'paused' ? t('resumeRecording') : t('pauseRecording')}
+                  className="ms-1 rounded p-1 text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+                >
+                  {recorder.state === 'paused' ? (
+                    <Play className="size-3.5" aria-hidden="true" />
+                  ) : (
+                    <Pause className="size-3.5" aria-hidden="true" />
+                  )}
+                  <span className="sr-only">
+                    {recorder.state === 'paused' ? t('resumeRecording') : t('pauseRecording')}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void recorder.stop()}
+                  title={t('stopRecording')}
+                  className="rounded p-1 text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+                >
+                  <Square className="size-3.5 fill-red-500 text-red-500" aria-hidden="true" />
+                  <span className="sr-only">{t('stopRecording')}</span>
+                </button>
+              </>
+            )}
+          </span>
+        ) : null}
+
+        {live.status === 'reconnecting' && (
+          <span className="flex shrink-0 items-center gap-1.5 text-[12px] text-gold-300" role="status">
+            <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+            {t('reconnecting')}
+          </span>
+        )}
+
+        <h1 className="min-w-0 flex-1 truncate text-center font-display text-[14px] font-semibold text-white/90">
+          {title}
+        </h1>
 
         {/* How many are in the room. The teacher asked for it by name, and it
             is the same list the participants panel shows; nobody is named by
             the number. */}
         <span
-          className="flex shrink-0 items-center gap-1.5 text-[12px] text-white/60"
+          className="flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-[12px] text-white/70"
           title={t('participantsCount', { count: live.people.length })}
         >
-          <Users className="size-3.5" aria-hidden="true" />
+          <Users className="size-4" aria-hidden="true" />
           <span className="tabular-nums" aria-hidden="true">
             {live.people.length}
           </span>
           <span className="sr-only">{t('participantsCount', { count: live.people.length })}</span>
         </span>
 
-        {live.status === 'reconnecting' && (
-          <span className="flex items-center gap-1.5 text-[12px] text-gold-300" role="status">
-            <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
-            {t('reconnecting')}
-          </span>
-        )}
-        {recorder.state === 'recording' && (
-          <span className="flex items-center gap-1.5 text-[12px] text-red-300" role="status">
-            <span className="size-2 animate-pulse rounded-full bg-red-500" aria-hidden="true" />
-            {t('recording')}
-          </span>
-        )}
+        {leaveButtons}
       </header>
 
       {isHost && (
@@ -1156,7 +1199,7 @@ export function Classroom({
             ) : boardOnStage && !shareOnStage ? (
               <div
                 data-record-container
-                className="relative m-3 min-h-0 flex-1 overflow-hidden rounded-2xl border border-white/10"
+                className="relative m-2 min-h-0 flex-1 overflow-hidden rounded-lg bg-black"
               >
                 {boardCanvas}
                 {sharer && sharePip && (
@@ -1171,7 +1214,7 @@ export function Classroom({
                   type="button"
                   onClick={() => setBoardOnStage(false)}
                   title={t('boardShrink')}
-                  className="absolute end-2 top-2 rounded-lg bg-black/50 p-2 text-white/80 transition-colors hover:bg-black/70"
+                  className="absolute end-2 top-2 rounded-md bg-black/60 p-2 text-white/80 transition-colors hover:bg-black/80 hover:text-white"
                 >
                   <Minimize2 className="size-4" aria-hidden="true" />
                   <span className="sr-only">{t('boardShrink')}</span>
@@ -1201,11 +1244,9 @@ export function Classroom({
               the sharer all had no audio element at all. */}
           <RemoteAudio room={live.room} />
 
-          {/* The strip and the controls, kept above the phone sheet so a
-              teacher can still mute and raise a hand with the panel open. */}
-          <div ref={footRef} className="relative z-50 bg-ink lg:z-auto">
-            {tabStrip('bar')}
-
+          {/* The toolbar, kept above the phone sheet so a teacher can still
+              mute and a student raise a hand with the panel open. */}
+          <div ref={footRef} className="relative z-50 lg:z-auto">
             <Controls
               isHost={isHost}
               micOn={live.micOn}
@@ -1218,6 +1259,9 @@ export function Classroom({
               canCam={isHost || (live.abilities?.camera ?? initial.camera_allowed)}
               canShare={isHost || (live.abilities?.screen ?? initial.screen_allowed)}
               recording={recorder.state}
+              panels={panels}
+              openPanel={panelOpen ? tab : null}
+              onPanel={(key) => togglePanel(key as Tab)}
               onMic={() => void live.toggleMic()}
               onCam={() => void live.toggleCam()}
               onShare={() => {
@@ -1267,15 +1311,18 @@ export function Classroom({
             window.addEventListener('pointermove', move);
             window.addEventListener('pointerup', up);
           }}
-          className="hidden w-1.5 shrink-0 cursor-col-resize bg-white/5 transition-colors hover:bg-brand-500/60 focus-visible:bg-brand-500 lg:block"
+          className={cn(
+            'hidden w-1 shrink-0 cursor-col-resize bg-room-line/60 transition-colors hover:bg-room-blue focus-visible:bg-room-blue',
+            panelOpen && 'lg:block',
+          )}
         />
 
         <aside
           style={
             {
-              width: panelOpen ? undefined : `${panelWidth}px`,
-              // Where the strip and controls begin: the sheet stops there, so
-              // they stay reachable while it is open.
+              '--panel-w': `${panelWidth}px`,
+              // Where the toolbar begins: the sheet stops there, so it stays
+              // reachable while the sheet is open.
               '--foot': `${footHeight}px`,
             } as React.CSSProperties
           }
@@ -1283,26 +1330,26 @@ export function Classroom({
             // `min-w-0` so a long unbreakable word in a chat line cannot force
             // the panel past its width and drag the whole room wider than the
             // viewport; `break-words` only bites once the box is constrained.
-            'flex min-w-0 flex-col border-white/10 bg-black/25',
+            // Closed, it is hidden rather than unmounted: the slides list, the
+            // chat draft and the board keep their state.
+            'min-w-0 flex-col bg-room-bar',
+            panelOpen ? 'flex' : 'hidden',
             // On a phone it is a sheet over the stage, tall enough to read a
             // chat and shallow enough to keep the lesson in sight.
-            'max-lg:fixed max-lg:inset-x-0 max-lg:bottom-0 max-lg:z-40 max-lg:max-h-[70dvh] max-lg:rounded-t-2xl max-lg:border-t max-lg:bg-ink/95 max-lg:pb-[var(--foot)]',
-            panelOpen ? 'max-lg:flex' : 'max-lg:hidden',
-            // On a wide screen it is a column that is always there.
-            'lg:static lg:flex lg:max-w-none lg:border-s',
+            'max-lg:fixed max-lg:inset-x-0 max-lg:bottom-0 max-lg:z-40 max-lg:max-h-[70dvh] max-lg:rounded-t-2xl max-lg:border-t max-lg:border-room-line max-lg:pb-[var(--foot)] max-lg:shadow-2xl',
+            // On a wide screen it is a column beside the stage.
+            'lg:static lg:w-[var(--panel-w)] lg:shrink-0',
           )}
         >
-          {tabStrip('panel')}
-
-          <div className="flex items-center justify-between border-b border-white/10 px-3 py-2 lg:hidden">
-            <span className="text-[12px] font-medium text-white/60">
+          <div className="flex h-11 shrink-0 items-center justify-between border-b border-room-line/70 ps-4 pe-2">
+            <span className="text-[13px] font-semibold text-white">
               {tabs.find((item) => item.key === tab)?.label}
             </span>
             <button
               type="button"
               onClick={() => setPanelOpen(false)}
               title={t('closePanel')}
-              className="rounded-lg p-1.5 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+              className="rounded-md p-1.5 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
             >
               <X className="size-4" aria-hidden="true" />
               <span className="sr-only">{t('closePanel')}</span>
@@ -1342,7 +1389,7 @@ export function Classroom({
                     // student steps down, exactly as presenting a slide does.
                     setStaged(null);
                   }}
-                  className="flex items-center justify-center gap-2 border-b border-white/10 p-2 text-[12px] text-white/70 transition-colors hover:bg-white/5 hover:text-white"
+                  className="flex items-center justify-center gap-2 border-b border-room-line/70 p-2 text-[12px] text-white/75 transition-colors hover:bg-white/5 hover:text-white"
                 >
                   <Maximize2 className="size-3.5" aria-hidden="true" />
                   {t('boardExpand')}
@@ -1369,9 +1416,9 @@ export function Classroom({
       </div>
 
       {dropping && (
-        <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-ink/80 p-6">
-          <div className="rounded-2xl border-2 border-dashed border-brand-400 bg-ink/60 px-10 py-12 text-center">
-            <Upload className="mx-auto size-8 text-brand-300" aria-hidden="true" />
+        <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-room/85 p-6">
+          <div className="rounded-2xl border-2 border-dashed border-room-blue bg-room-bar/80 px-10 py-12 text-center">
+            <Upload className="mx-auto size-8 text-room-blue" aria-hidden="true" />
             <p className="mt-3 font-display text-[15px] font-semibold">{t('dropSlides')}</p>
             <p className="mt-1 text-[12px] text-white/50">{t('slidesHint')}</p>
           </div>

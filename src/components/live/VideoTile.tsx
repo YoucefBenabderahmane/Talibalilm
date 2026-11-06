@@ -53,8 +53,9 @@ export function VideoTile({
   return (
     <div
       className={cn(
-        'relative overflow-hidden rounded-xl bg-black/40 ring-1 ring-white/10',
-        person.speaking && 'ring-2 ring-brand-400',
+        '@container relative overflow-hidden rounded-lg bg-room-raised ring-1 ring-black/40',
+        // The one who is talking is framed in green, as in every meeting app.
+        person.speaking && 'ring-[3px] ring-room-green',
         className,
       )}
     >
@@ -76,28 +77,28 @@ export function VideoTile({
 
       {!showVideo && (
         <div className="flex size-full items-center justify-center">
-          <span className="flex size-14 items-center justify-center rounded-full bg-white/10 text-lg font-semibold text-white/80">
+          <span className="flex aspect-square h-[38%] max-h-24 min-h-8 -translate-y-1 items-center justify-center rounded-full bg-room-line text-[clamp(0.8rem,6cqw,2rem)] font-semibold text-white/90">
             {initials}
           </span>
         </div>
       )}
 
-      <div className="absolute inset-x-0 bottom-0 flex items-center gap-1.5 bg-gradient-to-t from-black/70 to-transparent px-2.5 py-1.5">
+      <div className="absolute start-1.5 bottom-1.5 flex max-w-[calc(100%-0.75rem)] items-center gap-1.5 rounded bg-black/65 px-1.5 py-0.5">
         {person.micOn ? (
           <Mic className="size-3.5 shrink-0 text-white/80" aria-hidden="true" />
         ) : (
-          <MicOff className="size-3.5 shrink-0 text-red-400" aria-hidden="true" />
+          <MicOff className="size-3.5 shrink-0 text-red-500" aria-hidden="true" />
         )}
-        <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-white">
+        <span className="min-w-0 truncate text-[12px] text-white">
           {person.name}
           {person.isLocal && ' •'}
         </span>
         {person.handUp && <Hand className="size-3.5 shrink-0 text-gold-400" aria-hidden="true" />}
         {person.sharing && source !== Track.Source.ScreenShare && (
-          <MonitorUp className="size-3.5 shrink-0 text-brand-300" aria-hidden="true" />
+          <MonitorUp className="size-3.5 shrink-0 text-room-green" aria-hidden="true" />
         )}
         {person.isHost && (
-          <span className="shrink-0 rounded bg-brand-500/90 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-white uppercase">
+          <span className="shrink-0 rounded-sm bg-room-blue px-1 py-px text-[9px] font-semibold tracking-wide text-white uppercase">
             {t('host')}
           </span>
         )}

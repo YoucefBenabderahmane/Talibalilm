@@ -104,7 +104,15 @@ export function SlidesPanel({
   // fold, and the teacher could not see that it had opened, nor find the
   // first one again without scrolling by hand.
   useEffect(() => {
-    activeItem.current?.scrollIntoView({ block: 'nearest' });
+    // The list scrolls itself, never its ancestors: `scrollIntoView` also
+    // scrolled the room's clipped box and slid the whole page sideways.
+    const item = activeItem.current;
+    const list = item?.parentElement;
+    if (!item || !list) return;
+    const itemBox = item.getBoundingClientRect();
+    const listBox = list.getBoundingClientRect();
+    if (itemBox.top < listBox.top) list.scrollTop -= listBox.top - itemBox.top + 8;
+    else if (itemBox.bottom > listBox.bottom) list.scrollTop += itemBox.bottom - listBox.bottom + 8;
   }, [current, total]);
 
   const liveErrorText = (failure: LiveDeckError) => {
@@ -153,7 +161,7 @@ export function SlidesPanel({
   };
 
   const uploader = canPresent ? (
-    <label className="m-2 flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-white/20 p-5 text-center transition-colors hover:border-brand-400/70 hover:bg-white/5">
+    <label className="m-3 flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-room-line bg-room-raised/40 p-5 text-center transition-colors hover:border-room-blue hover:bg-room-raised">
       {busy > 0 || opening ? (
         <Loader2 className="size-5 animate-spin text-white/60" aria-hidden="true" />
       ) : (
@@ -285,7 +293,7 @@ export function SlidesPanel({
       ) : (
         <>
           {canPresent && (
-            <div className="flex items-center gap-2 border-b border-white/10 p-2">
+            <div className="flex items-center gap-2 border-b border-room-line/70 p-2">
               <button
                 type="button"
                 onClick={() => onGo(Math.max(0, current - 1))}
@@ -340,11 +348,11 @@ export function SlidesPanel({
                   disabled={!canPresent}
                   className={cn(
                     'block w-full overflow-hidden rounded-lg ring-2 transition-colors',
-                    index === current ? 'ring-brand-400' : 'ring-transparent hover:ring-white/20',
+                    index === current ? 'ring-room-blue' : 'ring-transparent hover:ring-white/25',
                     !canPresent && 'cursor-default',
                   )}
                 >
-                  <span className="relative block aspect-video bg-ink">
+                  <span className="relative block aspect-video bg-black">
                     {slide.kind === 'live' ? (
                       live && <LiveThumb pageId={slide.id} render={live.render} />
                     ) : (

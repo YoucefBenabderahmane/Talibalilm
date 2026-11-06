@@ -41,7 +41,7 @@ export function RecorderNotices({
     new Intl.DateTimeFormat(locale, { dateStyle: 'short', timeStyle: 'short' }).format(ms);
 
   return (
-    <div className="flex shrink-0 flex-col gap-2 border-b border-white/10 px-4 py-2 text-[12px]">
+    <div className="flex shrink-0 flex-col gap-2 border-b border-room-line/70 px-4 py-2 text-[12px]">
       {issue && (
         <div role="alert" className="flex items-start gap-2 rounded-lg bg-red-500/15 p-2.5 text-red-100">
           <AlertTriangle className="mt-0.5 size-4 shrink-0 text-red-300" aria-hidden="true" />
@@ -95,7 +95,7 @@ export function RecorderNotices({
           <button
             type="button"
             onClick={() => onDownloadRecovered(recording.id)}
-            className="inline-flex items-center gap-1.5 rounded-full bg-brand-500 px-3 py-1.5 text-white hover:bg-brand-600"
+            className="inline-flex items-center gap-1.5 rounded-full bg-room-blue px-3 py-1.5 text-white hover:bg-room-blue-hover"
           >
             <Download className="size-3.5" aria-hidden="true" />
             {t('recordRecoveredDownload')}

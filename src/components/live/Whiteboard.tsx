@@ -320,7 +320,7 @@ export function Whiteboard({
       className={cn(
         'inline-flex size-8 items-center justify-center rounded-lg transition-colors',
         tool === value
-          ? 'bg-brand-500 text-white'
+          ? 'bg-room-blue text-white'
           : 'text-white/60 hover:bg-white/10 hover:text-white',
       )}
     >
@@ -332,7 +332,7 @@ export function Whiteboard({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {canDraw && (
-        <div className="flex flex-wrap items-center gap-1 border-b border-white/10 p-2">
+        <div className="flex flex-wrap items-center gap-1 border-b border-room-line/70 p-2">
           {toolButton('pen', Pen, t('boardPen'))}
           {toolButton('line', Minus, t('boardLine'))}
           {toolButton('rect', Square, t('boardRect'))}
@@ -385,7 +385,7 @@ export function Whiteboard({
           onPointerUp={up}
           onPointerCancel={up}
           className={cn(
-            'size-full bg-ink',
+            'size-full bg-room',
             canDraw
               ? tool === 'text'
                 ? 'cursor-text touch-none'
