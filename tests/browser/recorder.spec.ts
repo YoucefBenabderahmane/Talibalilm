@@ -231,3 +231,24 @@ test('« Quitter » right after « Arrêter » still delivers the whole file', a
   expect(size).toBeGreaterThan(300_000);
   expect(await download.failure()).toBeNull();
 });
+
+test('« Arrêter » hands the file over at once — « Terminer » does not wait on it', async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => window.harness.start({ realDownload: true }));
+  await page.waitForTimeout(6_000);
+
+  const downloading = page.waitForEvent('download');
+  // The room ends the class the moment this resolves. It used to hold the
+  // teacher for a fixed 1.5 s first; now it is the time to close the file.
+  const ms = await page.evaluate(async () => {
+    const t0 = performance.now();
+    await window.harness.stop();
+    return performance.now() - t0;
+  });
+  expect(ms).toBeLessThan(1_000);
+  const download = await downloading;
+  expect(await download.failure()).toBeNull();
+  const file = await download.path();
+  const { size } = await import('node:fs').then((fs) => fs.promises.stat(file));
+  expect(size).toBeGreaterThan(200_000);
+});

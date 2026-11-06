@@ -7,6 +7,7 @@ import {
   type StoredRecording,
 } from '@/lib/live/recording/chunk-store';
 import {
+  downloadFile,
   RecordingSession,
   type RecordSources,
   type RecorderIssue,
@@ -15,6 +16,7 @@ import {
 
 export type { RecorderState, RecordSources, RecorderIssue };
 export type { RecordFrame, RecordFrameItem } from '@/lib/live/recording/session';
+export { downloadsSettled } from '@/lib/live/recording/session';
 
 /**
  * Record the class to the teacher's own machine.
@@ -37,7 +39,10 @@ interface Recorder {
   /** 1 for the first file of the class; 2+ after a failure saved part one. */
   part: number;
   start: () => Promise<void>;
-  /** Stops and saves. Resolves once the file is handed over. */
+  /**
+   * Stops and saves. Resolves as soon as the file is handed to the browser's
+   * downloader; a page about to leave then awaits `downloadsSettled()`.
+   */
   stop: () => Promise<boolean>;
   togglePause: () => void;
   dismissIssue: () => void;
@@ -45,17 +50,6 @@ interface Recorder {
   recovered: StoredRecording[];
   downloadRecovered: (id: string) => Promise<void>;
   discardRecovered: (id: string) => Promise<void>;
-}
-
-function download(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 export function useRecorder(fileBaseName: string, sources: RecordSources): Recorder {
@@ -154,7 +148,7 @@ export function useRecorder(fileBaseName: string, sources: RecordSources): Recor
       const blob = await s.assemble(id);
       if (!blob) return;
       const extension = row.mimeType.includes('mp4') ? 'mp4' : 'webm';
-      download(blob, `${row.name}-recupere.${extension}`);
+      downloadFile(blob, `${row.name}-recupere.${extension}`);
       await s.markSaved(id);
       setRecovered((list) => list.filter((r) => r.id !== id));
     },
