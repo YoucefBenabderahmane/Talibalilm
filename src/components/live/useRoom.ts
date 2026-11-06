@@ -291,10 +291,13 @@ export function useRoom({ roomToken, isHost, onMessage }: Options) {
     };
   }, [room, roomToken, snapshot]);
 
+  /** Resolves once the message is on its way; a failed send is not an error to the caller. */
   const send = useCallback(
-    (message: RoomMessage) => {
+    async (message: RoomMessage): Promise<void> => {
       if (room.state !== ConnectionState.Connected) return;
-      void room.localParticipant.publishData(encodeMessage(message), { reliable: true });
+      await room.localParticipant
+        .publishData(encodeMessage(message), { reliable: true })
+        .catch(() => {});
     },
     [room],
   );

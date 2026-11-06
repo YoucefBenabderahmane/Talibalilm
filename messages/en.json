@@ -1324,6 +1324,7 @@
     "denyScreen": "Stop their sharing",
     "dropSlides": "Drop files here to present them",
     "endConfirm": "End the class for everyone?",
+    "endFailed": "The class could not be ended. Try again in a moment.",
     "endForAll": "End the class",
     "errorBody": "The database did not answer. Try again in a moment; if it persists, check the Vercel logs.",
     "errorTitle": "The room is briefly unavailable",
@@ -1418,6 +1419,7 @@
     "slidesOpening": "Opening “{name}”…",
     "slidesLiveStudent": "The teacher is presenting slides live.",
     "slidesLiveNotKept": "This browser could not keep a copy of the file: after reloading the page, drop it again.",
+    "recordNotSaved": "The recording could not be saved, so the class stays open. The notice above the room says why; a copy is kept on this computer and will be offered when you reload the page.",
     "recordSaveNow": "Save the video now",
     "recordRecovered": "An interrupted recording was found on this computer ({size}, started {date}).",
     "recordRecoveredDownload": "Download",
@@ -1426,6 +1428,7 @@
     "recordIssue": {
       "unsupported": "This browser cannot record the class. Use an up-to-date Google Chrome.",
       "recorderFailed": "The recording stopped. The part already recorded has been downloaded. Click “Record” to continue in a new file (part {part}).",
+      "saveFailed": "The recording file could not be saved on this computer. A backup copy is kept: reload the page to download it.",
       "pauseFailed": "The browser refused to pause. The recording continues.",
       "resumeFailed": "The recording could not resume. The part already recorded has been downloaded. Click “Record” to continue in a new file (part {part}).",
       "slidesNotRecorded": "Slides appear as an empty frame in the recording: the R2 storage does not allow reading them. Add GET to the R2 bucket’s CORS rule. The class itself carries on normally.",

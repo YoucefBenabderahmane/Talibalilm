@@ -1324,6 +1324,7 @@
     "denyScreen": "Couper le partage",
     "dropSlides": "Déposez vos fichiers ici pour les projeter",
     "endConfirm": "Terminer le cours pour tout le monde ?",
+    "endFailed": "Le cours n’a pas pu être terminé. Réessayez dans un instant.",
     "endForAll": "Terminer le cours",
     "errorBody": "La base de données n’a pas répondu. Réessayez dans un instant ; si cela persiste, consultez les journaux Vercel.",
     "errorTitle": "La salle est momentanément indisponible",
@@ -1418,6 +1419,7 @@
     "slidesOpening": "Ouverture de « {name} »…",
     "slidesLiveStudent": "L’enseignant présente ses diapositives en direct.",
     "slidesLiveNotKept": "Ce navigateur n’a pas pu garder une copie du fichier : après un rechargement de la page, déposez-le à nouveau.",
+    "recordNotSaved": "L’enregistrement n’a pas pu être sauvegardé, le cours reste donc ouvert. Le message au-dessus de la salle donne la raison ; une copie est gardée sur cet ordinateur et vous sera proposée en rechargeant la page.",
     "recordSaveNow": "Enregistrer la vidéo maintenant",
     "recordRecovered": "Un enregistrement interrompu a été retrouvé sur cet ordinateur ({size}, commencé le {date}).",
     "recordRecoveredDownload": "Télécharger",
@@ -1426,6 +1428,7 @@
     "recordIssue": {
       "unsupported": "Ce navigateur ne peut pas enregistrer le cours. Utilisez Google Chrome à jour.",
       "recorderFailed": "L’enregistrement s’est arrêté. La partie déjà enregistrée a été téléchargée. Cliquez sur « Enregistrer » pour continuer dans un nouveau fichier (partie {part}).",
+      "saveFailed": "Le fichier de l’enregistrement n’a pas pu être sauvegardé sur cet ordinateur. Une copie de secours est gardée : rechargez la page pour la télécharger.",
       "pauseFailed": "Le navigateur a refusé la pause. L’enregistrement continue.",
       "resumeFailed": "L’enregistrement n’a pas pu reprendre. La partie déjà enregistrée a été téléchargée. Cliquez sur « Enregistrer » pour continuer dans un nouveau fichier (partie {part}).",
       "slidesNotRecorded": "Les diapositives sont remplacées par un cadre vide dans l’enregistrement : le stockage R2 n’autorise pas leur lecture. Ajoutez GET à la règle CORS du bucket R2. Le cours, lui, continue normalement.",
