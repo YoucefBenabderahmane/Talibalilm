@@ -88,8 +88,15 @@ const TIMESLICE_MS = 5_000;
 /** Enough for slides and a face at 720p; about 0.7 GB an hour instead of ~1.1. */
 const VIDEO_BPS = 1_500_000;
 const AUDIO_BPS = 128_000;
-/** How long a fresh download is given before the page may navigate away. */
-const DOWNLOAD_GRACE_MS = 1_500;
+/**
+ * How long a fresh download is given before the page may navigate away.
+ * Chromium needs none: a 700 MB file survived a navigation in the same tick.
+ * Other browsers are not proven to keep a download still being handed over,
+ * and losing it loses the class, so a page that leaves waits out what is left
+ * of this. It runs alongside whatever the page does first (ending the class on
+ * the server), so in practice nobody waits for it.
+ */
+const DOWNLOAD_GRACE_MS = 1_000;
 
 export function pickMimeType(): string | undefined {
   if (typeof MediaRecorder === 'undefined') return undefined;
@@ -125,7 +132,10 @@ function originOf(src: string | undefined): string | undefined {
   }
 }
 
-function downloadFile(blob: Blob, filename: string): void {
+let lastDownloadAt = 0;
+
+/** Hand a file to the browser's downloader. Returns at once. */
+export function downloadFile(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
@@ -136,6 +146,16 @@ function downloadFile(blob: Blob, filename: string): void {
   // Revoked on a timer: Safari has been known to abandon the download if the
   // URL dies in the same tick as the click.
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  lastDownloadAt = Date.now();
+}
+
+/**
+ * Resolves once every download this page started has had its grace. A page
+ * awaits it last, right before it navigates away: « Quitter », « Terminer ».
+ */
+export async function downloadsSettled(): Promise<void> {
+  const left = lastDownloadAt + DOWNLOAD_GRACE_MS - Date.now();
+  if (left > 0) await new Promise((resolve) => setTimeout(resolve, left));
 }
 
 export class RecordingSession {
@@ -457,11 +477,9 @@ export class RecordingSession {
         if (this.options.onSaved) {
           this.options.onSaved({ blob, filename });
         } else {
+          // Not awaited past the hand-over: « Terminer » ends the class while
+          // the download starts. A page about to leave awaits downloadsSettled().
           downloadFile(blob, filename);
-          // « Quitter » and « Terminer » navigate the moment this resolves. A
-          // download handed over in the same instant as the page unloads can be
-          // dropped with the page, so the browser is given a moment to take it.
-          await new Promise((resolve) => setTimeout(resolve, DOWNLOAD_GRACE_MS));
         }
         saved = true;
         if (this.options.store && this.storeId) await this.options.store.markSaved(this.storeId);

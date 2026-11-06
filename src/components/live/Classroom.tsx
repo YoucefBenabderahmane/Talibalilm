@@ -24,7 +24,7 @@ import { SlidesPanel, type LivePanelDeck } from './SlidesPanel';
 import { SharePip } from './SharePip';
 import { RemoteAudio } from './RemoteAudio';
 import { useSlideUpload } from './useSlideUpload';
-import { useRecorder } from './useRecorder';
+import { downloadsSettled, useRecorder } from './useRecorder';
 import { RecorderNotices } from './RecorderNotices';
 import { useLiveDeck } from './useLiveDeck';
 import { useSlideBroadcast } from './useSlideBroadcast';
@@ -607,6 +607,7 @@ export function Classroom({
   const leaveTo = async (href: string) => {
     if (!(await saveRecording())) return;
     leaving.current = true;
+    await downloadsSettled();
     window.location.assign(href);
   };
 
@@ -886,8 +887,9 @@ export function Classroom({
   /**
    * End the class for everyone, in an order that loses nothing.
    *
-   * The recording first: the lesson is ended only once its file is saved. Then
-   * the server, and only once it has said yes is the class told — a refusal
+   * The recording first: its download is started — a hand-over, not a wait —
+   * and only a download that could not start keeps the class open. Then the
+   * server, and only once it has said yes is the class told — a refusal
    * leaves everyone in the room, with the cause on the teacher's screen,
    * rather than sending the students away from a class that is still open.
    */
@@ -908,6 +910,9 @@ export function Classroom({
     // The students leave on this message, so it is given a moment to go out
     // before this page unloads and takes the connection with it.
     await Promise.race([live.send({ t: 'ended' }), new Promise((r) => setTimeout(r, 1500))]);
+    // The download started before the class was ended; by now it has
+    // usually had its moment, so this rarely waits at all.
+    await downloadsSettled();
     window.location.assign('/admin/live');
   };
 

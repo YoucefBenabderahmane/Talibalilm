@@ -8,6 +8,7 @@
  */
 import { openChunkStore } from '@/lib/live/recording/chunk-store';
 import {
+  downloadsSettled,
   RecordingSession,
   type RecorderIssue,
   type RecorderState,
@@ -29,7 +30,7 @@ interface Harness {
   micRequests: number;
   setup(): Promise<void>;
   start(options?: { micDelayMs?: number; withStore?: boolean; realDownload?: boolean }): Promise<void>;
-  /** What « Quitter » does: stop, wait for the save, then navigate away. */
+  /** What « Quitter » does: stop, let the download settle, then navigate away. */
   stopAndLeave(): Promise<void>;
   startTwiceQuickly(): Promise<void>;
   stopWhileStarting(): Promise<RecorderState>;
@@ -144,6 +145,7 @@ window.harness = {
 
   async stopAndLeave() {
     await session?.stop();
+    await downloadsSettled();
     window.location.assign('about:blank');
   },
 
