@@ -78,7 +78,7 @@ export function ParticipantsPanel({
                 <Hand className="size-3.5 shrink-0 text-gold-400" aria-hidden="true" />
               )}
               {person.sharing && (
-                <MonitorUp className="size-3.5 shrink-0 text-brand-300" aria-hidden="true" />
+                <MonitorUp className="size-3.5 shrink-0 text-room-green" aria-hidden="true" />
               )}
               {person.micOn ? (
                 <Mic className="size-3.5 shrink-0 text-white/50" aria-hidden="true" />
@@ -86,7 +86,7 @@ export function ParticipantsPanel({
                 <MicOff className="size-3.5 shrink-0 text-white/25" aria-hidden="true" />
               )}
               {person.isHost && (
-                <span className="shrink-0 rounded bg-brand-500/80 px-1.5 py-0.5 text-[10px] font-semibold text-white uppercase">
+                <span className="shrink-0 rounded bg-room-blue px-1.5 py-0.5 text-[10px] font-semibold text-white uppercase">
                   {t('host')}
                 </span>
               )}
@@ -113,7 +113,7 @@ export function ParticipantsPanel({
                         );
                         onClearAsk(person.identity);
                       }}
-                      className="rounded-full bg-brand-500 px-3 py-1 text-[11px] font-medium text-white hover:bg-brand-600"
+                      className="rounded-full bg-room-blue px-3 py-1 text-[11px] font-medium text-white hover:bg-room-blue-hover"
                     >
                       {person.asking === 'screen' ? t('allow') : t('allowSpeak')}
                     </button>
@@ -145,7 +145,7 @@ export function ParticipantsPanel({
                     className={cn(
                       icon,
                       'text-white/60 hover:bg-white/10 hover:text-white',
-                      person.micOn && person.camOn && 'bg-brand-500/20 text-brand-200',
+                      person.micOn && person.camOn && 'bg-room-blue/25 text-[#8cc3ff]',
                     )}
                   >
                     {person.micOn && person.camOn ? (
@@ -185,7 +185,7 @@ export function ParticipantsPanel({
                     className={cn(
                       icon,
                       'text-white/60 hover:bg-white/10 hover:text-white',
-                      person.identity === staged && 'bg-brand-500/20 text-brand-200',
+                      person.identity === staged && 'bg-room-blue/25 text-[#8cc3ff]',
                     )}
                   >
                     <Presentation className="size-3.5" />
@@ -215,7 +215,7 @@ export function ParticipantsPanel({
       </ul>
 
       {isHost && removed.length > 0 && (
-        <section className="border-t border-white/10 p-3">
+        <section className="border-t border-room-line/70 p-3">
           <h3 className="text-[10px] font-semibold tracking-wide text-white/40 uppercase">
             {t('removedPeople')}
           </h3>
@@ -229,7 +229,7 @@ export function ParticipantsPanel({
                   type="button"
                   onClick={() => onRestore(person.userId)}
                   title={t('restoreThem')}
-                  className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-1 text-[11px] text-white/80 transition-colors hover:bg-brand-500 hover:text-white"
+                  className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-1 text-[11px] text-white/80 transition-colors hover:bg-room-blue hover:text-white"
                 >
                   <UserPlus className="size-3" aria-hidden="true" />
                   {t('restoreThem')}

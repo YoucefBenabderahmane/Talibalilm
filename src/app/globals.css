@@ -69,6 +69,17 @@
   --color-ink-soft: #2b3b38;
   --color-ink-muted: #637471;
 
+  /* The live room: the neutral greys of a video-meeting app, not the site's
+     green-black. Video and slides read truest on grey, and the teacher asked
+     for the room to look like the meeting software everyone already knows. */
+  --color-room: #1a1a1a;
+  --color-room-bar: #242424;
+  --color-room-raised: #2f2f2f;
+  --color-room-line: #3a3a3a;
+  --color-room-blue: #0e72ed;
+  --color-room-blue-hover: #0b5cbf;
+  --color-room-green: #23d959;
+
   /* Surfaces */
   --color-surface: #f2f7f6;
   --color-accent: #e9f7f3;

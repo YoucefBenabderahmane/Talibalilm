@@ -37,15 +37,17 @@ export function ChatPanel({
     minute: '2-digit',
   });
   const [draft, setDraft] = useState('');
-  const endRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLOListElement | null>(null);
 
+  // The list scrolls itself to the newest line, never its ancestors.
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: 'end' });
+    const list = listRef.current;
+    if (list) list.scrollTop = list.scrollHeight;
   }, [lines.length]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <ol className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+      <ol ref={listRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
         {lines.length === 0 && (
           <li className="py-8 text-center text-[12px] text-white/40">{t('chatEmpty')}</li>
         )}
@@ -55,7 +57,7 @@ export function ChatPanel({
               <span
                 className={cn(
                   'text-[12px] font-semibold',
-                  line.isHost ? 'text-brand-300' : 'text-white/70',
+                  line.isHost ? 'text-[#5ea9ff]' : 'text-white/70',
                 )}
               >
                 {line.name || '—'}
@@ -70,12 +72,11 @@ export function ChatPanel({
             </p>
           </li>
         ))}
-        <div ref={endRef} />
       </ol>
 
       {canWrite ? (
         <form
-          className="flex items-center gap-2 border-t border-white/10 p-2.5"
+          className="flex items-center gap-2 border-t border-room-line/70 p-3"
           onSubmit={(event) => {
             event.preventDefault();
             onSend(draft);
@@ -88,19 +89,19 @@ export function ChatPanel({
             maxLength={2000}
             placeholder={t('chatPlaceholder')}
             aria-label={t('chatPlaceholder')}
-            className="min-w-0 flex-1 rounded-full bg-white/10 px-4 py-2 text-[13px] text-white placeholder:text-white/35 focus:bg-white/15 focus:outline-none"
+            className="min-w-0 flex-1 rounded-lg border border-room-line bg-room-raised px-3 py-2 text-[13px] text-white placeholder:text-white/40 focus:border-room-blue focus:outline-none"
           />
           <button
             type="submit"
             disabled={!draft.trim()}
             aria-label={t('chatSend')}
-            className="rounded-full bg-brand-500 p-2 text-white transition-colors hover:bg-brand-600 disabled:opacity-40"
+            className="rounded-lg bg-room-blue p-2 text-white transition-colors hover:bg-room-blue-hover disabled:opacity-40"
           >
             <Send className="size-4" aria-hidden="true" />
           </button>
         </form>
       ) : (
-        <p className="border-t border-white/10 p-3 text-center text-[12px] text-white/40">
+        <p className="border-t border-room-line/70 p-3 text-center text-[12px] text-white/45">
           {closedReason === 'muted' ? t('chatMuted') : t('chatClosed')}
         </p>
       )}

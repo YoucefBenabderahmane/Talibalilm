@@ -158,7 +158,7 @@ export function StageCamera({
             type="button"
             onClick={onMinimize}
             title={t('studentMinimize')}
-            className="rounded-full bg-ink/75 p-2 text-white/80 transition-colors hover:text-white"
+            className="rounded-full bg-black/60 p-2 text-white/80 transition-colors hover:text-white"
           >
             <Minimize2 className="size-4" aria-hidden="true" />
             <span className="sr-only">{t('studentMinimize')}</span>
@@ -169,7 +169,7 @@ export function StageCamera({
             type="button"
             onClick={() => setView({ scale: 1, x: 0, y: 0 })}
             title={t('slideZoomReset')}
-            className="rounded-full bg-ink/75 px-3 py-1 text-[11px] text-white/80 transition-colors hover:text-white"
+            className="rounded-full bg-black/60 px-3 py-1 text-[11px] text-white/80 transition-colors hover:text-white"
           >
             {t('slideZoomReset')} · {Math.round(view.scale * 100)}%
           </button>

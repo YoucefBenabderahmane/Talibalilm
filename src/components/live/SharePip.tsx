@@ -49,7 +49,7 @@ export function SharePip({
           type="button"
           onClick={onExpand}
           title={t('shareExpand')}
-          className="absolute end-1.5 top-1.5 rounded-lg bg-ink/75 p-1.5 text-white/80 transition-colors hover:bg-ink hover:text-white"
+          className="absolute end-1.5 top-1.5 rounded-lg bg-black/60 p-1.5 text-white/80 transition-colors hover:bg-black/80 hover:text-white"
         >
           <Maximize2 className="size-3.5" aria-hidden="true" />
           <span className="sr-only">{t('shareExpand')}</span>
