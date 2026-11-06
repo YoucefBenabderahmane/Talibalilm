@@ -189,6 +189,90 @@ function modernRuns(): boolean {
 }
 
 /**
+ * Where pdf.js fetches its helper files: the decoders a scanned page needs
+ * (JPEG 2000, JBIG2), the fonts a PDF names without embedding, character maps
+ * and colour profiles. `scripts/copy-pdfjs-assets.mjs` puts them in public/,
+ * in a folder named after the library's version. Without them a scanned PDF
+ * opened and every page came out blank — the "second PDF does not work" a
+ * teacher met.
+ *
+ * pdf.js's own worker code fetches them (`useWorkerFetch`): its main-thread
+ * helper reads `document.baseURI`, which this thread does not have.
+ */
+function helperFiles(version: string) {
+  const base = `${self.location.origin}/pdfjs/${version}/`;
+  return {
+    wasmUrl: `${base}wasm/`,
+    standardFontDataUrl: `${base}standard_fonts/`,
+    cMapUrl: `${base}cmaps/`,
+    cMapPacked: true,
+    iccUrl: `${base}iccs/`,
+    useWorkerFetch: true,
+  };
+}
+
+/** Above this, a file is read in pieces as pdf.js asks for them; below, whole. */
+const READ_IN_PIECES_FROM = 4 * 1024 * 1024;
+const PIECE = 256 * 1024;
+
+/** A password or a broken file: the same answer however the bytes are read. */
+function fileProblem(thrown: unknown): boolean {
+  const name = (thrown as { name?: string })?.name ?? '';
+  return name === 'PasswordException' || name === 'InvalidPDFException';
+}
+
+/**
+ * Load one document on one engine.
+ *
+ * A large deck is read in pieces: pdf.js asks for the bytes of the pages it
+ * draws, and this thread reads just those from the file on disk. Reading a
+ * 120 MB deck whole kept all of it in memory for the rest of the class, once
+ * per open PDF — the second or third large deck could take the tab down. If
+ * the piecewise open fails for any reason but the file itself, the whole-file
+ * read it replaced is tried before giving up on the engine.
+ */
+async function load(
+  pdfjs: PdfModule,
+  file: File,
+): Promise<{ task: { destroy: () => Promise<void> }; document: DocumentProxy }> {
+  const common = {
+    ...helperFiles(pdfjs.version),
+    disableFontFace: true,
+    useSystemFonts: false,
+    CanvasFactory: OffscreenCanvasFactory as never,
+    FilterFactory: PlainFilterFactory as never,
+  };
+
+  if (file.size > READ_IN_PIECES_FROM) {
+    let task: ReturnType<PdfModule['getDocument']> | null = null;
+    try {
+      const head = new Uint8Array(await file.slice(0, PIECE).arrayBuffer());
+      const range = new pdfjs.PDFDataRangeTransport(file.size, head);
+      range.requestDataRange = (begin: number, end: number) => {
+        void file
+          .slice(begin, end)
+          .arrayBuffer()
+          .then((bytes) => range.onDataRange(begin, new Uint8Array(bytes)));
+      };
+      task = pdfjs.getDocument({
+        ...common,
+        range,
+        rangeChunkSize: PIECE,
+        disableAutoFetch: true,
+        disableStream: true,
+      });
+      return { task, document: await task.promise };
+    } catch (thrown) {
+      if (task) await task.destroy().catch(() => {});
+      if (fileProblem(thrown)) throw thrown;
+    }
+  }
+
+  const task = pdfjs.getDocument({ ...common, data: new Uint8Array(await file.arrayBuffer()) });
+  return { task, document: await task.promise };
+}
+
+/**
  * Open one document, modern engine first where the browser can run it.
  *
  * Same order as the main-thread path: the modern build is measurably faster and
@@ -217,15 +301,7 @@ async function open(file: File, from = 0): Promise<number> {
       pdfjs.GlobalWorkerOptions.workerSrc = '';
       await engine.inline();
 
-      const task = pdfjs.getDocument({
-        data: new Uint8Array(await file.arrayBuffer()),
-        useWorkerFetch: false,
-        disableFontFace: true,
-        useSystemFonts: false,
-        CanvasFactory: OffscreenCanvasFactory as never,
-        FilterFactory: PlainFilterFactory as never,
-      });
-      const opened = await task.promise;
+      const { task, document: opened } = await load(pdfjs, file);
       document_ = opened;
       task_ = task;
       file_ = file;

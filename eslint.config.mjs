@@ -17,6 +17,9 @@ export default tseslint.config(
       // Linting machine output tells us nothing we can act on, and it is not
       // in version control either.
       'src/generated/**',
+      // pdf.js's own decoder files, copied from node_modules by
+      // scripts/copy-pdfjs-assets.mjs. Third-party output, not ours to lint.
+      'public/pdfjs/**',
     ],
   },
   ...compat.extends('next/core-web-vitals', 'next/typescript'),

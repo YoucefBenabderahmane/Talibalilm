@@ -28,3 +28,6 @@ supabase/.temp
 
 # Prisma generates this from prisma/schema.prisma; `postinstall` recreates it.
 /src/generated/
+
+# pdf.js helper files, copied from node_modules by scripts/copy-pdfjs-assets.mjs.
+/public/pdfjs/

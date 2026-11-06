@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CorsImage } from './CorsImage';
 import { useTranslations } from 'next-intl';
 import {
@@ -82,6 +82,8 @@ export function SlidesPanel({
 }) {
   const t = useTranslations('live');
   const inputRef = useRef<HTMLInputElement | null>(null);
+  /** The page on stage, in the list. */
+  const activeItem = useRef<HTMLLIElement | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
   const { busy, converting, error, detail, skipped, notice, upload: uploadFiles } = upload;
@@ -97,12 +99,18 @@ export function SlidesPanel({
   ];
   const total = items.length;
 
+  // The list follows the page on stage. A PDF opened mid-lesson lands after
+  // every page already open — after a 450-page deck that is far below the
+  // fold, and the teacher could not see that it had opened, nor find the
+  // first one again without scrolling by hand.
+  useEffect(() => {
+    activeItem.current?.scrollIntoView({ block: 'nearest' });
+  }, [current, total]);
+
   const liveErrorText = (failure: LiveDeckError) => {
     switch (failure.code) {
       case 'duplicate':
         return t('errors.liveDuplicate', { name: failure.name });
-      case 'busy':
-        return t('errors.liveBusy', { name: failure.name });
       case 'pageFailed':
         return t('errors.livePageFailed', { name: failure.name });
       default:
@@ -321,7 +329,11 @@ export function SlidesPanel({
 
           <ol className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
             {items.map((slide, index) => (
-              <li key={slide.id} className="relative">
+              <li
+                key={slide.id}
+                ref={index === current ? activeItem : undefined}
+                className="relative"
+              >
                 <button
                   type="button"
                   onClick={() => canPresent && onGo(index)}
