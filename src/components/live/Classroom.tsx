@@ -40,6 +40,7 @@ import {
 } from '@/app/actions/live';
 import { clearSlides, removeSlide } from '@/app/actions/slides';
 import { removeAt } from '@/lib/live/deck';
+import { groupAt, groupDeck } from '@/lib/live/deck-groups';
 import type { BoardOp, RoomMessage } from '@/lib/live/protocol';
 import type { LiveRoomState } from '@/lib/supabase/database.types';
 
@@ -778,6 +779,19 @@ export function Classroom({
     present(index);
   };
 
+  // The pager under the slide counts within the PDF on stage — « 3 / 12 », not
+  // « 415 / 450 » — and its arrows stop at that PDF's edges: the next file is
+  // opened from the panel, the way the teacher put it there.
+  const stageGroup = isHost
+    ? groupAt(
+        groupDeck([
+          ...deck.map((s) => ({ kind: 'stored' as const, id: s.id, filename: s.filename })),
+          ...liveDeck.pages.map((p) => ({ kind: 'live' as const, id: p.id, filename: p.filename })),
+        ]),
+        slide,
+      )
+    : null;
+
   /**
    * Persist a board operation or a chat line.
    *
@@ -1227,9 +1241,11 @@ export function Classroom({
                 presenting={presenting}
                 slide={stageSlide}
                 canPresent={isHost}
-                slideIndex={slide}
-                slideTotal={slideTotal}
-                onGoSlide={goToSlide}
+                slideIndex={stageGroup ? slide - stageGroup.start : slide}
+                slideTotal={stageGroup ? stageGroup.count : slideTotal}
+                onGoSlide={
+                  stageGroup ? (index) => goToSlide(stageGroup.start + index) : goToSlide
+                }
                 sharePip={sharePip}
                 onMinimizeShare={() => setSharePip(true)}
                 onExpandShare={() => setSharePip(false)}

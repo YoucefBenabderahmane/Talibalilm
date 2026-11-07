@@ -12,6 +12,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { groupAt, groupDeck, type DeckGroup } from '@/lib/live/deck-groups';
 import type { SlideUploadState } from './useSlideUpload';
 import type { LiveDeckError } from './useLiveDeck';
 import { LiveThumb } from './LiveThumb';
@@ -99,6 +100,39 @@ export function SlidesPanel({
   ];
   const total = items.length;
 
+  // One section per file. The PDF on stage is open; the others are folded
+  // under their names, one click from coming back — where the teacher left
+  // them, not at page one.
+  const groups = groupDeck(items);
+  const currentGroup = groupAt(groups, current);
+  const currentKey = currentGroup?.key ?? null;
+  const currentId = items[current]?.id ?? null;
+  /** null follows the stage; '' is the teacher folding even the open one away. */
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const shownKey = openKey ?? currentKey ?? groups[groups.length - 1]?.key ?? null;
+  /** The last page shown in each file, so going back resumes there. */
+  const lastSeen = useRef(new Map<string, string>());
+
+  useEffect(() => {
+    setOpenKey(null);
+  }, [currentKey]);
+
+  useEffect(() => {
+    if (currentKey && currentId) lastSeen.current.set(currentKey, currentId);
+  }, [currentKey, currentId]);
+
+  const openGroup = (group: DeckGroup) => {
+    if (group.key === shownKey) {
+      setOpenKey('');
+      return;
+    }
+    setOpenKey(group.key);
+    if (!canPresent || group.key === currentKey) return;
+    const remembered = lastSeen.current.get(group.key);
+    const at = remembered ? items.findIndex((item) => item.id === remembered) : -1;
+    onGo(at >= group.start && at < group.start + group.count ? at : group.start);
+  };
+
   // The list follows the page on stage. A PDF opened mid-lesson lands after
   // every page already open — after a 450-page deck that is far below the
   // fold, and the teacher could not see that it had opened, nor find the
@@ -107,13 +141,13 @@ export function SlidesPanel({
     // The list scrolls itself, never its ancestors: `scrollIntoView` also
     // scrolled the room's clipped box and slid the whole page sideways.
     const item = activeItem.current;
-    const list = item?.parentElement;
+    const list = item?.closest<HTMLElement>('[data-slides-list]');
     if (!item || !list) return;
     const itemBox = item.getBoundingClientRect();
     const listBox = list.getBoundingClientRect();
     if (itemBox.top < listBox.top) list.scrollTop -= listBox.top - itemBox.top + 8;
     else if (itemBox.bottom > listBox.bottom) list.scrollTop += itemBox.bottom - listBox.bottom + 8;
-  }, [current, total]);
+  }, [current, total, shownKey]);
 
   const liveErrorText = (failure: LiveDeckError) => {
     switch (failure.code) {
@@ -296,20 +330,25 @@ export function SlidesPanel({
             <div className="flex items-center gap-2 border-b border-room-line/70 p-2">
               <button
                 type="button"
-                onClick={() => onGo(Math.max(0, current - 1))}
-                disabled={current <= 0}
+                onClick={() => onGo(current - 1)}
+                disabled={!currentGroup || current <= currentGroup.start}
                 className="inline-flex size-8 items-center justify-center rounded-lg text-white/70 hover:bg-white/10 disabled:opacity-30"
               >
                 <ChevronLeft className="size-4" aria-hidden="true" />
                 <span className="sr-only">{t('slidePrev')}</span>
               </button>
-              <p className="flex-1 text-center text-[12px] text-white/60">
-                {current + 1} / {total}
+              {/* Counted within the PDF on stage, like the pager under the slide. */}
+              <p className="min-w-0 flex-1 truncate text-center text-[12px] text-white/60">
+                {currentGroup
+                  ? `${current - currentGroup.start + 1} / ${currentGroup.count}`
+                  : `– / ${total}`}
               </p>
               <button
                 type="button"
-                onClick={() => onGo(Math.min(total - 1, current + 1))}
-                disabled={current >= total - 1}
+                onClick={() => onGo(currentGroup ? current + 1 : 0)}
+                disabled={
+                  currentGroup ? current >= currentGroup.start + currentGroup.count - 1 : total === 0
+                }
                 className="inline-flex size-8 items-center justify-center rounded-lg text-white/70 hover:bg-white/10 disabled:opacity-30"
               >
                 <ChevronRight className="size-4" aria-hidden="true" />
@@ -335,64 +374,129 @@ export function SlidesPanel({
             </div>
           )}
 
-          <ol className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
-            {items.map((slide, index) => (
-              <li
-                key={slide.id}
-                ref={index === current ? activeItem : undefined}
-                className="relative"
-              >
-                <button
-                  type="button"
-                  onClick={() => canPresent && onGo(index)}
-                  disabled={!canPresent}
+          <ol data-slides-list className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
+            {groups.map((group) => {
+              const open = group.key === shownKey;
+              const onStage = group.key === currentKey;
+              const first = items[group.start];
+              return (
+                <li
+                  key={group.key}
                   className={cn(
-                    'block w-full overflow-hidden rounded-lg ring-2 transition-colors',
-                    index === current ? 'ring-room-blue' : 'ring-transparent hover:ring-white/25',
-                    !canPresent && 'cursor-default',
+                    'overflow-hidden rounded-lg border',
+                    onStage
+                      ? 'border-room-blue/60 bg-room-raised/70'
+                      : 'border-room-line/70 bg-room-raised/30',
                   )}
                 >
-                  <span className="relative block aspect-video bg-black">
-                    {slide.kind === 'live' ? (
-                      live && <LiveThumb pageId={slide.id} render={live.render} />
-                    ) : (
-                      slide.url && (
-                        // Same CORS load as the stage, so the cache never holds a
-                        // plain copy that would make the stage's CORS load fail.
-                        <CorsImage
-                          src={slide.url}
-                          alt={slide.filename}
-                          loading="lazy"
-                          className="absolute inset-0 size-full object-contain"
-                        />
-                      )
-                    )}
-                    <span className="absolute start-1.5 top-1.5 rounded bg-black/70 px-1.5 text-[10px] text-white">
-                      {index + 1}
-                    </span>
-                  </span>
-                </button>
-
-                {/* Sibling of the thumbnail button, not inside it: a button
-                    inside a button is invalid and swallows the click. */}
-                {canPresent && (
                   <button
                     type="button"
-                    onClick={() => void remove(slide)}
-                    disabled={removing !== null}
-                    title={t('slideRemove')}
-                    className="absolute end-1.5 top-1.5 inline-flex size-7 items-center justify-center rounded-md bg-black/70 text-white/70 transition-colors hover:bg-red-600 hover:text-white disabled:opacity-40"
+                    onClick={() => openGroup(group)}
+                    aria-expanded={open}
+                    title={group.title}
+                    className="flex w-full items-center gap-2.5 p-2 text-start transition-colors hover:bg-white/5"
                   >
-                    {removing === slide.id ? (
-                      <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
-                    ) : (
-                      <Trash2 className="size-3.5" aria-hidden="true" />
+                    <ChevronRight
+                      className={cn(
+                        'size-4 shrink-0 text-white/50 transition-transform rtl:-scale-x-100',
+                        open && 'rotate-90',
+                      )}
+                      aria-hidden="true"
+                    />
+                    <span className="relative aspect-video w-14 shrink-0 overflow-hidden rounded bg-black">
+                      {first?.kind === 'live'
+                        ? live && <LiveThumb pageId={first.id} render={live.render} />
+                        : first?.url && (
+                            <CorsImage
+                              src={first.url}
+                              alt=""
+                              loading="lazy"
+                              className="absolute inset-0 size-full object-contain"
+                            />
+                          )}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[12px] font-medium text-white">
+                        {group.title}
+                      </span>
+                      <span className="block text-[11px] text-white/45">
+                        {t('slidesPages', { count: group.count })}
+                      </span>
+                    </span>
+                    {onStage && (
+                      <span className="shrink-0 rounded bg-room-blue px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                        {t('slidesOnStage')}
+                      </span>
                     )}
-                    <span className="sr-only">{t('slideRemove')}</span>
                   </button>
-                )}
-              </li>
-            ))}
+
+                  {open && (
+                    <ol className="space-y-2 px-2 pb-2">
+                      {items.slice(group.start, group.start + group.count).map((slide, offset) => {
+                        const index = group.start + offset;
+                        return (
+                        <li
+                          key={slide.id}
+                          ref={index === current ? activeItem : undefined}
+                          className="relative"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => canPresent && onGo(index)}
+                            disabled={!canPresent}
+                            className={cn(
+                              'block w-full overflow-hidden rounded-lg ring-2 transition-colors',
+                              index === current ? 'ring-room-blue' : 'ring-transparent hover:ring-white/25',
+                              !canPresent && 'cursor-default',
+                            )}
+                          >
+                            <span className="relative block aspect-video bg-black">
+                              {slide.kind === 'live' ? (
+                                live && <LiveThumb pageId={slide.id} render={live.render} />
+                              ) : (
+                                slide.url && (
+                                  // Same CORS load as the stage, so the cache never holds a
+                                  // plain copy that would make the stage's CORS load fail.
+                                  <CorsImage
+                                    src={slide.url}
+                                    alt={slide.filename}
+                                    loading="lazy"
+                                    className="absolute inset-0 size-full object-contain"
+                                  />
+                                )
+                              )}
+                              <span className="absolute start-1.5 top-1.5 rounded bg-black/70 px-1.5 text-[10px] text-white">
+                                {index - group.start + 1}
+                              </span>
+                            </span>
+                          </button>
+
+                          {/* Sibling of the thumbnail button, not inside it: a button
+                              inside a button is invalid and swallows the click. */}
+                          {canPresent && (
+                            <button
+                              type="button"
+                              onClick={() => void remove(slide)}
+                              disabled={removing !== null}
+                              title={t('slideRemove')}
+                              className="absolute end-1.5 top-1.5 inline-flex size-7 items-center justify-center rounded-md bg-black/70 text-white/70 transition-colors hover:bg-red-600 hover:text-white disabled:opacity-40"
+                            >
+                              {removing === slide.id ? (
+                                <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                              ) : (
+                                <Trash2 className="size-3.5" aria-hidden="true" />
+                              )}
+                              <span className="sr-only">{t('slideRemove')}</span>
+                            </button>
+                          )}
+                        </li>
+                        );
+                      })}
+                    </ol>
+                  )}
+                </li>
+              );
+            })}
           </ol>
         </>
       )}
