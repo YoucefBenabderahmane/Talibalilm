@@ -12,6 +12,8 @@
  * slides from being shown — the caller only loses the restore-after-reload.
  */
 
+import type { Stroke } from './marks';
+
 const DB_NAME = 'talibalim-live-decks';
 const DB_VERSION = 1;
 const STORE = 'sources';
@@ -25,6 +27,11 @@ export interface StoredSource {
   file: Blob;
   removed: number[];
   addedAt: number;
+  /**
+   * The teacher's pen marks, by page number. Kept with the file, so they go
+   * when the file goes and come back with it after a reload.
+   */
+  marks?: Record<string, Stroke[]>;
 }
 
 function request<T>(req: IDBRequest<T>): Promise<T> {
@@ -108,6 +115,31 @@ export async function setRemovedPages(
     await done(tx);
   } catch {
     /* The deck still works; only the restore would show the page again. */
+  }
+}
+
+/** Replace one page's marks. An empty list forgets the page's entry. */
+export async function setPageMarks(
+  sessionId: string,
+  sourceId: string,
+  page: number,
+  strokes: Stroke[],
+): Promise<void> {
+  const db = await database();
+  if (!db) return;
+  try {
+    const tx = db.transaction(STORE, 'readwrite');
+    const store = tx.objectStore(STORE);
+    const row = (await request(store.get(keyOf(sessionId, sourceId)))) as StoredSource | undefined;
+    if (row) {
+      const marks = { ...(row.marks ?? {}) };
+      if (strokes.length > 0) marks[String(page)] = strokes;
+      else delete marks[String(page)];
+      store.put({ ...row, marks });
+    }
+    await done(tx);
+  } catch {
+    /* The marks stay on screen; only the restore after a reload would lose them. */
   }
 }
 

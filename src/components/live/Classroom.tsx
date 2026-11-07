@@ -41,6 +41,8 @@ import {
 import { clearSlides, removeSlide } from '@/app/actions/slides';
 import { removeAt } from '@/lib/live/deck';
 import { groupAt, groupDeck } from '@/lib/live/deck-groups';
+import { PEN_COLORS, type Stroke } from '@/lib/live/marks';
+import type { SlideAnnotate } from './SlidePen';
 import type { BoardOp, RoomMessage } from '@/lib/live/protocol';
 import type { LiveRoomState } from '@/lib/supabase/database.types';
 
@@ -298,7 +300,8 @@ export function Classroom({
       const bitmap = await renderLivePage(pageId, 'stage', 'stage');
       if (wantedLive.current !== pageId) return false;
       if (!bitmap) break;
-      shown = await broadcast.show(bitmap);
+      // With the marks the teacher left on it, whenever she comes back to it.
+      shown = await broadcast.show(bitmap, liveDeck.marksFor(pageId));
     }
     // The next pages are drawn while the teacher talks about this one, so
     // turning the page is instant.
@@ -779,6 +782,45 @@ export function Classroom({
     present(index);
   };
 
+  /**
+   * The teacher's pen on the live page on stage. One pen for the lesson — on
+   * or off, and its colour, survive turning the page — and marks for each
+   * page, kept by the deck until that page or its PDF is removed.
+   */
+  const [pen, setPen] = useState<{ on: boolean; color: string }>({
+    on: false,
+    color: PEN_COLORS[0].value,
+  });
+  /** Bumped when a page's marks change, so the undo button follows. */
+  const [, setMarksVersion] = useState(0);
+  const changeMarks = (pageId: string, strokes: Stroke[], redraw: boolean) => {
+    liveDeck.setMarks(pageId, strokes);
+    setMarksVersion((n) => n + 1);
+    // Undo and clear repaint the page from scratch; a new stroke is already on it.
+    if (redraw) void showLive(pageId, slideRef.current);
+  };
+  const annotate: SlideAnnotate | undefined = hostLivePage
+    ? (() => {
+        const pageId = hostLivePage.id;
+        const marks = liveDeck.marksFor(pageId);
+        return {
+          canvas: broadcast.canvas,
+          on: pen.on,
+          color: pen.color,
+          onToggle: () => setPen((p) => ({ ...p, on: !p.on })),
+          onColor: (color: string) => setPen({ on: true, color }),
+          onDraw: broadcast.drawMark,
+          onDone: (stroke: Stroke) => {
+            broadcast.finishMark();
+            changeMarks(pageId, [...liveDeck.marksFor(pageId), stroke], false);
+          },
+          hasMarks: marks.length > 0,
+          onUndo: () => changeMarks(pageId, liveDeck.marksFor(pageId).slice(0, -1), true),
+          onClear: () => changeMarks(pageId, [], true),
+        };
+      })()
+    : undefined;
+
   // The pager under the slide counts within the PDF on stage — « 3 / 12 », not
   // « 415 / 450 » — and its arrows stop at that PDF's edges: the next file is
   // opened from the panel, the way the teacher put it there.
@@ -1251,6 +1293,7 @@ export function Classroom({
                 onExpandShare={() => setSharePip(false)}
                 staged={staged}
                 onStage={stageStudent}
+                annotate={annotate}
               />
             )}
           </div>

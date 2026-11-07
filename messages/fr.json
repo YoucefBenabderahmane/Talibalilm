@@ -1321,6 +1321,18 @@
     "stopShareShort": "Arrêter",
     "handShort": "Main",
     "stopRecordingShort": "Arrêter",
+    "penOn": "Annoter la diapositive",
+    "penOff": "Arrêter d’annoter",
+    "penUndo": "Annuler le dernier trait",
+    "penClear": "Effacer les annotations de cette page",
+    "penClearConfirm": "Effacer toutes les annotations de cette page ?",
+    "penColor": {
+      "red": "Rouge",
+      "yellow": "Jaune",
+      "green": "Vert",
+      "blue": "Bleu",
+      "white": "Blanc"
+    },
     "colourBlue": "Bleu",
     "colourGreen": "Vert",
     "colourRed": "Rouge",

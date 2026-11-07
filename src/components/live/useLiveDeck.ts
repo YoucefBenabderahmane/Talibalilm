@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { classifyUpload } from '@/lib/media/upload-kind';
+import { asStroke, type Stroke } from '@/lib/live/marks';
 import {
   LiveDocumentError,
   liveDeckSupported,
@@ -14,6 +15,7 @@ import {
   forgetSource,
   keepSource,
   purgeOlderThan,
+  setPageMarks,
   setRemovedPages,
   sourcesFor,
 } from '@/lib/live/deck-store';
@@ -115,6 +117,8 @@ export function useLiveDeck(sessionId: string, enabled: boolean) {
   const stageCache = useRef(new BitmapCache(STAGE_CACHE));
   const thumbCache = useRef(new BitmapCache(THUMB_CACHE));
   const inFlight = useRef(new Map<string, Promise<ImageBitmap | null>>());
+  /** The teacher's pen marks, by page id. Saved with the file, gone with it. */
+  const marks = useRef(new Map<string, Stroke[]>());
   /**
    * Opens run one after another, in the order they were asked for: a PDF
    * dropped while another is still opening waits its turn instead of being
@@ -168,6 +172,12 @@ export function useLiveDeck(sessionId: string, enabled: boolean) {
           const file = new File([row.file], row.name, { type: row.type });
           const source = await openOne(file, row.sourceId);
           for (const page of row.removed) source.removed.add(page);
+          for (const [page, list] of Object.entries(row.marks ?? {})) {
+            const strokes = (Array.isArray(list) ? list : [])
+              .map(asStroke)
+              .filter((stroke): stroke is Stroke => stroke !== null);
+            if (strokes.length > 0) marks.current.set(`${row.sourceId}:${page}`, strokes);
+          }
           if (cancelled) {
             source.doc.close();
             return;
@@ -315,6 +325,8 @@ export function useLiveDeck(sessionId: string, enabled: boolean) {
       const source = sources.current.get(sourceId ?? '');
       if (!source) return;
       source.removed.add(Number(pageText));
+      // A deleted page takes its marks with it.
+      if (marks.current.delete(pageId)) void setPageMarks(sessionId, source.id, Number(pageText), []);
       if (source.removed.size >= source.doc.pages) {
         source.doc.close();
         sources.current.delete(source.id);
@@ -340,8 +352,26 @@ export function useLiveDeck(sessionId: string, enabled: boolean) {
     sources.current.clear();
     stageCache.current.clear();
     thumbCache.current.clear();
+    marks.current.clear();
     publish([]);
   }, [publish, sessionId]);
+
+  /** A page's marks, oldest first. */
+  const marksFor = useCallback((pageId: string): Stroke[] => marks.current.get(pageId) ?? [], []);
+
+  /** Replace a page's marks, here and in the copy kept for a reload. */
+  const setMarks = useCallback(
+    (pageId: string, strokes: Stroke[]) => {
+      const cut = pageId.lastIndexOf(':');
+      const sourceId = pageId.slice(0, cut);
+      const page = Number(pageId.slice(cut + 1));
+      if (cut <= 0 || !sources.current.has(sourceId) || !Number.isFinite(page)) return;
+      if (strokes.length > 0) marks.current.set(pageId, strokes);
+      else marks.current.delete(pageId);
+      void setPageMarks(sessionId, sourceId, page, strokes);
+    },
+    [sessionId],
+  );
 
   return {
     supported,
@@ -356,6 +386,8 @@ export function useLiveDeck(sessionId: string, enabled: boolean) {
     render,
     remove,
     clear,
+    marksFor,
+    setMarks,
   };
 }
 

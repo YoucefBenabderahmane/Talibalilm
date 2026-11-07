@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ConnectionState, RoomEvent, Track, type LocalTrackPublication, type Room } from 'livekit-client';
 import { startTicker } from '@/lib/live/recording/ticker';
+import { drawStroke, drawStrokes, type Stroke } from '@/lib/live/marks';
 import { STAGE_BOX } from './useLiveDeck';
 
 /**
@@ -41,6 +42,11 @@ export function useSlideBroadcast(room: Room, isHost: boolean) {
    */
   const lastFrame = useRef<ImageBitmap | null>(null);
   const frameSeq = useRef(0);
+  /**
+   * The teacher is drawing. The keepalive pushes frames but does not repaint
+   * the kept copy, which would wipe the stroke in progress off the page.
+   */
+  const drawing = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   const canvas = useCallback((): HTMLCanvasElement | null => {
@@ -110,9 +116,27 @@ export function useSlideBroadcast(room: Room, isHost: boolean) {
     track?.stop();
   }, [room]);
 
-  /** Draw one page, letterboxed on black, and send it to the class. */
+  /** Keep a copy of what is on the canvas now, for the keepalive to repaint. */
+  const keepCopy = useCallback((element: HTMLCanvasElement) => {
+    lastFrame.current?.close();
+    lastFrame.current = null;
+    const seq = ++frameSeq.current;
+    void createImageBitmap(element)
+      .then((copy) => {
+        // Pages turned faster than the copies resolve: only the newest stays.
+        if (seq !== frameSeq.current) {
+          copy.close();
+          return;
+        }
+        lastFrame.current?.close();
+        lastFrame.current = copy;
+      })
+      .catch(() => {});
+  }, []);
+
+  /** Draw one page, letterboxed on black, with its marks, and send it to the class. */
   const show = useCallback(
-    async (bitmap: ImageBitmap) => {
+    async (bitmap: ImageBitmap, marks: readonly Stroke[] = []) => {
       const element = canvas();
       const ctx = element?.getContext('2d');
       // A bitmap released by the cache between render and draw reads as 0×0:
@@ -130,28 +154,44 @@ export function useSlideBroadcast(room: Room, isHost: boolean) {
       } catch {
         return false;
       }
+      // The page's marks, where the teacher left them.
+      drawStrokes(ctx, marks);
       // The old copy goes now, not when the new one resolves: a keepalive tick
       // in between would otherwise paint the previous page back over this one.
-      lastFrame.current?.close();
-      lastFrame.current = null;
-      const seq = ++frameSeq.current;
-      void createImageBitmap(element)
-        .then((copy) => {
-          // Pages turned faster than the copies resolve: only the newest stays.
-          if (seq !== frameSeq.current) {
-            copy.close();
-            return;
-          }
-          lastFrame.current?.close();
-          lastFrame.current = copy;
-        })
-        .catch(() => {});
+      keepCopy(element);
       await publish();
       pushFrame();
       return true;
     },
-    [canvas, publish, pushFrame],
+    [canvas, keepCopy, publish, pushFrame],
   );
+
+  /**
+   * Draw the new part of a stroke on the page the class is watching. `from` is
+   * the index of its first new point; 0 draws it whole.
+   */
+  const drawMark = useCallback(
+    (stroke: Stroke, from: number) => {
+      const ctx = canvasRef.current?.getContext('2d');
+      if (!ctx || !hasContent.current) return;
+      drawing.current = true;
+      drawStroke(ctx, stroke, from);
+      pushFrame();
+    },
+    [pushFrame],
+  );
+
+  /** The stroke is finished: keep the page as it now is. */
+  const finishMark = useCallback(() => {
+    drawing.current = false;
+    const element = canvasRef.current;
+    if (!element || !hasContent.current) return;
+    keepCopy(element);
+    pushFrame();
+    // The stream sends at most a few frames a second; the last one of a quick
+    // stroke may be skipped, so the finished page is sent once more.
+    window.setTimeout(pushFrame, 300);
+  }, [keepCopy, pushFrame]);
 
   // The keepalive frame, from a clock a hidden tab does not throttle.
   useEffect(() => {
@@ -160,7 +200,7 @@ export function useSlideBroadcast(room: Room, isHost: boolean) {
       if (!publicationRef.current) return;
       const frame = lastFrame.current;
       const ctx = canvasRef.current?.getContext('2d');
-      if (frame && ctx) {
+      if (frame && ctx && !drawing.current) {
         try {
           ctx.drawImage(frame, 0, 0);
         } catch {
@@ -206,5 +246,5 @@ export function useSlideBroadcast(room: Room, isHost: boolean) {
 
   useEffect(() => () => unpublish(), [unpublish]);
 
-  return { canvas, show, unpublish, error };
+  return { canvas, show, drawMark, finishMark, unpublish, error };
 }
