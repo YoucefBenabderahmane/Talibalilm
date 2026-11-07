@@ -1315,6 +1315,8 @@
     "closedTitle": "Ce cours n’est pas ouvert",
     "closePanel": "Fermer le panneau",
     "more": "Plus",
+    "slidesPages": "{count, plural, one {# page} other {# pages}}",
+    "slidesOnStage": "À l’écran",
     "shareShort": "Partager",
     "stopShareShort": "Arrêter",
     "handShort": "Main",
