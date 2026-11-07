@@ -15,6 +15,7 @@ import { Track, type Participant, type Room } from 'livekit-client';
 import { cn } from '@/lib/utils';
 import { clampPan, nextZoom } from '@/lib/live/zoom';
 import { SharePip } from './SharePip';
+import { SlidePen, type SlideAnnotate } from './SlidePen';
 import { StageCamera } from './StageCamera';
 import { VideoTile } from './VideoTile';
 import type { RoomPerson } from './useRoom';
@@ -56,6 +57,7 @@ export function Stage({
   onExpandShare,
   staged,
   onStage,
+  annotate,
 }: {
   room: Room;
   people: RoomPerson[];
@@ -76,6 +78,8 @@ export function Stage({
   staged: string | null;
   /** The host alone moves people on and off the stage. */
   onStage: (identity: string | null) => void;
+  /** The teacher's pen, when the slide on stage is one she can draw on. */
+  annotate?: SlideAnnotate;
 }) {
   const t = useTranslations('live');
   const byIdentity = (identity: string): Participant | undefined =>
@@ -153,6 +157,7 @@ export function Stage({
             index={slideIndex}
             total={slideTotal}
             onGo={onGoSlide}
+            annotate={annotate}
           />
         ) : slideIndex >= 0 ? (
           // The deck arrives without links and the page on stage is signed on
@@ -256,12 +261,14 @@ function SlideStage({
   index,
   total,
   onGo,
+  annotate,
 }: {
   content: SlideContent;
   canPresent: boolean;
   index: number;
   total: number;
   onGo: (index: number) => void;
+  annotate?: SlideAnnotate;
 }) {
   const t = useTranslations('live');
   const container = useRef<HTMLDivElement>(null);
@@ -435,6 +442,9 @@ function SlideStage({
             {content.node}
           </div>
         )}
+
+        {/* The pen draws on the page the class is watching: live pages only. */}
+        {canPresent && annotate && content.kind === 'live' && <SlidePen {...annotate} />}
 
         {(canPresent || view.scale > 1) && (
           <div className="absolute end-3 top-3 flex flex-col items-end gap-2">

@@ -1321,6 +1321,18 @@
     "stopShareShort": "Stop",
     "handShort": "Hand",
     "stopRecordingShort": "Stop",
+    "penOn": "Draw on the slide",
+    "penOff": "Stop drawing",
+    "penUndo": "Undo the last mark",
+    "penClear": "Clear this page’s marks",
+    "penClearConfirm": "Clear every mark on this page?",
+    "penColor": {
+      "red": "Red",
+      "yellow": "Yellow",
+      "green": "Green",
+      "blue": "Blue",
+      "white": "White"
+    },
     "colourBlue": "Blue",
     "colourGreen": "Green",
     "colourRed": "Red",
