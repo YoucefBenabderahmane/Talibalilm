@@ -373,7 +373,8 @@ export function Classroom({
   };
 
   /**
-   * Put a student on the big stage, or take them off it.
+   * Put a student — or the teacher herself — on the big stage, or take them
+   * off it.
    *
    * The teacher's decision travels as `focus`, so the whole class sees the same
    * layout — and so does a late joiner, through the sync answer. Staging is
@@ -381,6 +382,11 @@ export function Classroom({
    * may speak, so the same one-decision `allow-speak` the participants panel
    * already gives is applied first, and the student's own page opens the
    * camera when the permission arrives.
+   *
+   * The teacher staging herself is how she comes back to the big box once a
+   * slide or a shared screen has taken it — to show how a letter is
+   * pronounced, say. The slide stays where it was: a page from the panel, or
+   * the minimize on her own picture, puts it back.
    */
   const stageStudent = (identity: string | null) => {
     if (!isHost) return;
@@ -393,7 +399,10 @@ export function Classroom({
     if (live.people.some((p) => p.sharing)) setSharePip(true);
 
     const person = live.people.find((p) => p.identity === identity);
-    if (person && !person.camOn) void hostAction(identity, 'allow-speak');
+    if (!person || person.camOn) return;
+    // Her own click is the consent: the picture she asked for, not her initials.
+    if (person.isLocal) void live.toggleCam();
+    else void hostAction(identity, 'allow-speak');
   };
 
   /**

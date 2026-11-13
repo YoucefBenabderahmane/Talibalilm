@@ -34,7 +34,7 @@ export type SlideContent =
  * What the class is looking at.
  *
  * A lesson is not a meeting of equals, so the layout is not an even grid. When
- * something is being presented — a shared screen, the slide deck, or a student
+ * something is being presented — a shared screen, the slide deck, or a person
  * the teacher has brought onto the stage — it takes the big box and everyone
  * else becomes a strip. Otherwise the teacher is large and the students are
  * small, which is what a class looks like.
@@ -74,7 +74,7 @@ export function Stage({
   sharePip: boolean;
   onMinimizeShare: () => void;
   onExpandShare: () => void;
-  /** Identity of the student the teacher has put on the stage, or null. */
+  /** Identity of the person the teacher has put on the stage — a student or herself — or null. */
   staged: string | null;
   /** The host alone moves people on and off the stage. */
   onStage: (identity: string | null) => void;
@@ -214,8 +214,10 @@ export function Stage({
               <li key={person.identity} className="relative">
                 <VideoTile participant={p} person={person} className="size-full" />
                 {/* The teacher's quick way onto the big box: an expand control
-                    on each student's tile, the same posture as the share's. */}
-                {canPresent && !person.isHost && (
+                    on each student's tile, the same posture as the share's —
+                    and on her own, which is how she takes the big box back
+                    from a slide or a shared screen. */}
+                {canPresent && (!person.isHost || person.isLocal) && (
                   <button
                     type="button"
                     onClick={() => onStage(person.identity)}
