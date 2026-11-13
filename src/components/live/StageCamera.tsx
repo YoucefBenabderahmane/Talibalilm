@@ -10,7 +10,8 @@ import { useAttachedTrack } from './useAttachedTrack';
 import type { RoomPerson } from './useRoom';
 
 /**
- * A student the teacher has brought onto the main stage.
+ * A student the teacher has brought onto the main stage — or the teacher
+ * herself, back on the big box over a slide or a shared screen.
  *
  * Fitted, not cropped: `object-contain` shows the whole picture inside the big
  * box, the same posture as the shared screen. Cropping a webcam cuts off the
