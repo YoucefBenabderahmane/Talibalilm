@@ -6,9 +6,18 @@ import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { supabaseConfigured } from '@/lib/env';
 import { requireStaff } from '@/lib/auth/guards';
-import { checkVideo, MAX_VIDEO_BYTES } from '@/lib/media/video';
+import { checkVideo, MAX_VIDEO_BYTES, partCount, VIDEO_PART_BYTES } from '@/lib/media/video';
 import { isVideoKeyFor, slideName, videoKey } from '@/lib/storage/key';
-import { deleteObject, r2Configured, readObjectHead, signUpload } from '@/lib/storage/r2';
+import {
+  abortMultipart,
+  completeMultipart,
+  deleteObject,
+  listUploadedParts,
+  r2Configured,
+  readObjectHead,
+  signPart,
+  startMultipart,
+} from '@/lib/storage/r2';
 import { reportError } from '@/lib/observability/report';
 import type { AdminState } from '@/app/actions/admin';
 import { errorDetail } from '@/lib/supabase/error-detail';
@@ -40,8 +49,9 @@ async function staffClient() {
 }
 
 export interface VideoTicket extends AdminState {
-  url?: string;
   key?: string;
+  uploadId?: string;
+  partSize?: number;
 }
 
 const startSchema = z.object({
@@ -96,37 +106,140 @@ export async function startLessonVideoUpload(input: {
   const extension = parsed.data.contentType === 'video/webm' ? 'webm' : 'mp4';
   const key = videoKey(parsed.data.lessonId, extension, slideName());
 
-  // Twenty minutes: a 2 GB file on a domestic uplink takes longer than the five
-  // the slide uploader allows, and a signature that expires mid-upload fails
-  // with a 403 that names nothing.
-  const url = await signUpload(key, parsed.data.contentType, 20 * 60);
-  if (!url) return { ok: false, error: 'storageUnavailable' };
+  // In parts, always: a single PUT of a long recording is lost whole to one
+  // dropped connection. The parts are signed as they are needed.
+  const uploadId = await startMultipart(key, parsed.data.contentType);
+  if (!uploadId) return { ok: false, error: 'storageUnavailable' };
 
-  return { ok: true, url, key };
+  return { ok: true, key, uploadId, partSize: VIDEO_PART_BYTES };
+}
+
+/** The upload in progress, named the way every later call names it. */
+const uploadRef = {
+  lessonId: z.string().uuid(),
+  key: z.string().max(300),
+  uploadId: z.string().min(1).max(1024),
+};
+
+/**
+ * URLs for the next parts. Signed in batches as the upload moves, each for an
+ * hour, so a slow upload never holds a signature that has run out.
+ */
+export async function signLessonVideoParts(input: {
+  lessonId: string;
+  key: string;
+  uploadId: string;
+  parts: number[];
+}): Promise<AdminState & { urls?: Record<number, string> }> {
+  if (!r2Configured) return { ok: false, error: 'storageUnavailable' };
+  const parsed = z
+    .object({
+      ...uploadRef,
+      parts: z.array(z.number().int().min(1).max(10_000)).min(1).max(50),
+    })
+    .safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'invalid' };
+  const { lessonId, key, uploadId, parts } = parsed.data;
+  // A key this lesson would have been given, and nothing else.
+  if (!isVideoKeyFor(key, lessonId)) return { ok: false, error: 'invalid' };
+  await staffClient();
+
+  const urls: Record<number, string> = {};
+  for (const part of parts) {
+    const url = await signPart(key, uploadId, part);
+    if (!url) return { ok: false, error: 'storageUnavailable' };
+    urls[part] = url;
+  }
+  return { ok: true, urls };
+}
+
+/**
+ * The parts R2 already holds — what a reload resumes from. `gone` when the
+ * upload no longer exists, so the page starts a fresh one instead.
+ */
+export async function lessonVideoUploadedParts(input: {
+  lessonId: string;
+  key: string;
+  uploadId: string;
+}): Promise<AdminState & { parts?: number[]; gone?: boolean }> {
+  if (!r2Configured) return { ok: false, error: 'storageUnavailable' };
+  const parsed = z.object(uploadRef).safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'invalid' };
+  const { lessonId, key, uploadId } = parsed.data;
+  if (!isVideoKeyFor(key, lessonId)) return { ok: false, error: 'invalid' };
+  await staffClient();
+
+  try {
+    const parts = await listUploadedParts(key, uploadId);
+    if (!parts) return { ok: true, gone: true };
+    return { ok: true, parts: parts.map((part) => part.partNumber) };
+  } catch (error) {
+    return { ok: false, error: 'uploadFailed', detail: errorDetail(error) };
+  }
+}
+
+/** Throw away an upload the teacher cancelled, or that failed for good. */
+export async function abortLessonVideoUpload(input: {
+  lessonId: string;
+  key: string;
+  uploadId: string;
+}): Promise<AdminState> {
+  const parsed = z.object(uploadRef).safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'invalid' };
+  const { lessonId, key, uploadId } = parsed.data;
+  if (!isVideoKeyFor(key, lessonId)) return { ok: false, error: 'invalid' };
+  await staffClient();
+  await abortMultipart(key, uploadId);
+  return OK;
 }
 
 const finishSchema = z.object({
   lessonId: z.string().uuid(),
   classId: z.string().uuid(),
   key: z.string().max(300),
+  uploadId: z.string().min(1).max(1024),
+  /** How many parts the browser sent: R2 must hold every one of them. */
+  parts: z.number().int().min(1).max(partCount(MAX_VIDEO_BYTES)),
 });
 
 export async function finishLessonVideoUpload(input: {
   lessonId: string;
   classId: string;
   key: string;
+  uploadId: string;
+  parts: number;
 }): Promise<AdminState> {
   if (!r2Configured) return { ok: false, error: 'storageUnavailable' };
 
   const parsed = finishSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: 'invalid' };
-  const { lessonId, classId, key } = parsed.data;
+  const { lessonId, classId, key, uploadId, parts } = parsed.data;
 
   // Is this a key we would have issued for THIS lesson? A caller naming another
   // lesson's object stops here, before R2 is touched.
   if (!isVideoKeyFor(key, lessonId)) return { ok: false, error: 'invalid' };
 
   const supabase = await staffClient();
+
+  // Join the parts. R2 is asked which it holds rather than trusting the
+  // browser's list: every part from 1 to the last must be there, once.
+  let held: Awaited<ReturnType<typeof listUploadedParts>>;
+  try {
+    held = await listUploadedParts(key, uploadId);
+  } catch (error) {
+    return { ok: false, error: 'uploadFailed', detail: errorDetail(error) };
+  }
+  if (!held) return { ok: false, error: 'uploadFailed', detail: 'the upload no longer exists in R2' };
+  const complete = held.length === parts && held.every((part, i) => part.partNumber === i + 1);
+  if (!complete) {
+    return {
+      ok: false,
+      error: 'uploadFailed',
+      detail: `R2 holds ${held.length} of ${parts} parts — choose the same file again to resume`,
+    };
+  }
+  const joined = await completeMultipart(key, uploadId, held);
+  if (!joined.ok) return { ok: false, error: 'uploadFailed', detail: joined.detail };
 
   const object = await readObjectHead(key, 16);
   if (!object.ok) return { ok: false, error: 'uploadFailed', detail: object.detail };

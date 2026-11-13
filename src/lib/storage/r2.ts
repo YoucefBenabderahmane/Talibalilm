@@ -2,9 +2,14 @@ import 'server-only';
 
 import {
   S3Client,
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
+  CreateMultipartUploadCommand,
   GetObjectCommand,
+  ListPartsCommand,
   PutObjectCommand,
   DeleteObjectCommand,
+  UploadPartCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { reportError } from '@/lib/observability/report';
@@ -36,6 +41,14 @@ const ACCOUNT = process.env.R2_ACCOUNT_ID?.trim() ?? '';
 const ACCESS_KEY = process.env.R2_ACCESS_KEY_ID?.trim() ?? '';
 const SECRET = process.env.R2_SECRET_ACCESS_KEY?.trim() ?? '';
 const BUCKET = process.env.R2_BUCKET?.trim() ?? '';
+/**
+ * Optional. The S3 endpoint, when it is not the account's default one: a
+ * bucket created under Cloudflare's EU jurisdiction answers at
+ * `https://<id>.eu.r2.cloudflarestorage.com`, and a local S3 server stands in
+ * for R2 in tests. Unset — the normal case — means the default.
+ */
+const ENDPOINT =
+  process.env.R2_ENDPOINT?.trim().replace(/\/+$/, '') || `https://${ACCOUNT}.r2.cloudflarestorage.com`;
 
 /** True once all four values are present. Screens check this and degrade. */
 export const r2Configured = Boolean(ACCOUNT && ACCESS_KEY && SECRET && BUCKET);
@@ -88,8 +101,10 @@ function s3(): S3Client {
     client = new S3Client({
       // R2 has no regions; 'auto' is what Cloudflare's own documentation uses.
       region: 'auto',
-      endpoint: `https://${ACCOUNT}.r2.cloudflarestorage.com`,
+      endpoint: ENDPOINT,
       credentials: { accessKeyId: ACCESS_KEY, secretAccessKey: SECRET },
+      // A local S3 stand-in serves the bucket as a path, not a subdomain.
+      forcePathStyle: Boolean(process.env.R2_ENDPOINT),
 
       // WITHOUT THIS, EVERY BROWSER UPLOAD FAILS.
       //
@@ -143,6 +158,139 @@ export async function signUpload(
   } catch (error) {
     reportError('r2.signUpload', error, { key });
     return null;
+  }
+}
+
+/**
+ * A large file, sent in parts.
+ *
+ * One PUT of a 2 GB recording is lost whole to a single Wi-Fi drop or a laptop
+ * lid closed for a second, after half an hour of sending — and the browser
+ * reports it as « refused or interrupted », naming nothing. In parts, a drop
+ * costs one part, which is sent again; and because the upload id outlives the
+ * tab, a reload picks up where it stopped instead of at zero.
+ *
+ * The browser PUTs each part to a URL signed for that part alone. It never
+ * needs to read the parts' ETags back (which would take an `ExposeHeaders`
+ * line in the bucket's CORS policy): the server lists the parts itself when
+ * the upload is completed.
+ */
+export async function startMultipart(key: string, contentType: string): Promise<string | null> {
+  if (!r2Configured) return null;
+  try {
+    const result = await s3().send(
+      new CreateMultipartUploadCommand({ Bucket: BUCKET, Key: key, ContentType: contentType }),
+      { abortSignal: AbortSignal.timeout(R2_TIMEOUT_MS) },
+    );
+    return result.UploadId ?? null;
+  } catch (error) {
+    reportError('r2.startMultipart', error, { key });
+    return null;
+  }
+}
+
+/** A URL the browser may PUT one part to. No content type: a part has none. */
+export async function signPart(
+  key: string,
+  uploadId: string,
+  partNumber: number,
+  seconds = 3600,
+): Promise<string | null> {
+  if (!r2Configured) return null;
+  try {
+    return await getSignedUrl(
+      s3(),
+      new UploadPartCommand({ Bucket: BUCKET, Key: key, UploadId: uploadId, PartNumber: partNumber }),
+      { expiresIn: seconds },
+    );
+  } catch (error) {
+    reportError('r2.signPart', error, { key, partNumber });
+    return null;
+  }
+}
+
+/**
+ * The parts R2 already holds, in order. `null` when the upload no longer
+ * exists — completed, aborted, or swept by the bucket's lifecycle rule — which
+ * the caller reads as "start again", not as an error.
+ */
+export async function listUploadedParts(
+  key: string,
+  uploadId: string,
+): Promise<{ partNumber: number; etag: string; size: number }[] | null> {
+  if (!r2Configured) return null;
+  const parts: { partNumber: number; etag: string; size: number }[] = [];
+  let marker: string | undefined;
+  try {
+    for (;;) {
+      const page = await s3().send(
+        new ListPartsCommand({
+          Bucket: BUCKET,
+          Key: key,
+          UploadId: uploadId,
+          PartNumberMarker: marker,
+        }),
+        { abortSignal: AbortSignal.timeout(R2_TIMEOUT_MS) },
+      );
+      for (const part of page.Parts ?? []) {
+        if (part.PartNumber && part.ETag) {
+          parts.push({ partNumber: part.PartNumber, etag: part.ETag, size: part.Size ?? 0 });
+        }
+      }
+      if (!page.IsTruncated || !page.NextPartNumberMarker) break;
+      marker = String(page.NextPartNumberMarker);
+    }
+    return parts.sort((a, b) => a.partNumber - b.partNumber);
+  } catch (error) {
+    const name = (error as { name?: string })?.name;
+    if (name === 'NoSuchUpload') return null;
+    reportError('r2.listParts', error, { key });
+    throw error;
+  }
+}
+
+/** Join the parts into the object. Nothing exists under the key before this. */
+export async function completeMultipart(
+  key: string,
+  uploadId: string,
+  parts: { partNumber: number; etag: string }[],
+): Promise<{ ok: true } | { ok: false; detail: string }> {
+  if (!r2Configured) return { ok: false, detail: 'storage is not configured' };
+  try {
+    await s3().send(
+      new CompleteMultipartUploadCommand({
+        Bucket: BUCKET,
+        Key: key,
+        UploadId: uploadId,
+        MultipartUpload: {
+          Parts: parts.map((part) => ({ PartNumber: part.partNumber, ETag: part.etag })),
+        },
+      }),
+      // Joining a few hundred parts is server-side work at R2; it is given
+      // longer than a single read.
+      { abortSignal: AbortSignal.timeout(60_000) },
+    );
+    return { ok: true };
+  } catch (error) {
+    reportError('r2.completeMultipart', error, { key });
+    return {
+      ok: false,
+      detail: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+    };
+  }
+}
+
+/** Throw the parts away. Idempotent enough: an upload already gone is not an error. */
+export async function abortMultipart(key: string, uploadId: string): Promise<void> {
+  if (!r2Configured) return;
+  try {
+    await s3().send(
+      new AbortMultipartUploadCommand({ Bucket: BUCKET, Key: key, UploadId: uploadId }),
+      { abortSignal: AbortSignal.timeout(R2_TIMEOUT_MS) },
+    );
+  } catch (error) {
+    // The bucket's lifecycle rule removes abandoned parts after a few days.
+    reportError('r2.abortMultipart', error, { key });
   }
 }
 
