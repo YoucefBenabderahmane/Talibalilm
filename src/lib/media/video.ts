@@ -6,15 +6,47 @@
  * anything at all to the key we signed, so the only moment the truth is
  * knowable is after the bytes exist and we read them back.
  *
- * Only the two containers a browser can actually play are accepted. A .mov or
- * .avi that a `<video>` element will refuse is worse than a refusal here: the
- * teacher would see a successful upload and the student a black rectangle.
+ * Only the containers a browser can play are accepted: the ISO family (MP4,
+ * MOV, M4V — a phone's .mov is an MP4 in all but name) and Matroska (WebM, and
+ * the MKV that OBS records). An .avi or .wmv that a `<video>` element will
+ * refuse is worse than a refusal here: the teacher would see a successful
+ * upload and the student a black rectangle.
  *
  * Pure and exported so the rule is tested without a bucket.
  */
 
-/** 2 GB. A single presigned PUT can carry more; a teacher's patience cannot. */
-export const MAX_VIDEO_BYTES = 2 * 1024 * 1024 * 1024;
+/**
+ * 10 GB: a two-hour class recorded at full quality, with room to spare. The
+ * upload goes in parts that resume after a drop, so the size no longer decides
+ * whether it arrives — only how long it takes.
+ */
+export const MAX_VIDEO_BYTES = 10 * 1024 * 1024 * 1024;
+
+/**
+ * Every part but the last has exactly this size — R2 requires equal parts —
+ * and a dropped connection costs at most one of them. 10 GB is 320 parts, far
+ * inside the 10 000 allowed.
+ */
+export const VIDEO_PART_BYTES = 32 * 1024 * 1024;
+
+/** How many parts a file of `size` bytes is sent in. */
+export function partCount(size: number, partSize = VIDEO_PART_BYTES): number {
+  return Math.max(1, Math.ceil(size / partSize));
+}
+
+/** The byte range of part `n` (1-based) of a file of `size` bytes. */
+export function partRange(
+  n: number,
+  size: number,
+  partSize = VIDEO_PART_BYTES,
+): { start: number; end: number } {
+  const start = (n - 1) * partSize;
+  return { start, end: Math.min(size, start + partSize) };
+}
+
+/** What the file picker offers: the containers above, by type and by name. */
+export const VIDEO_ACCEPT =
+  'video/mp4,video/webm,video/quicktime,video/x-m4v,video/x-matroska,.mp4,.m4v,.mov,.webm,.mkv';
 
 export type VideoKind = 'mp4' | 'webm';
 

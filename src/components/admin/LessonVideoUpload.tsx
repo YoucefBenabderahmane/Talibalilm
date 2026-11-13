@@ -1,35 +1,105 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Film, Trash2, Upload } from 'lucide-react';
+import { Film, Trash2, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ActionError } from '@/components/admin/ActionError';
-import { formatBytes, MAX_VIDEO_BYTES } from '@/lib/media/video';
 import {
+  formatBytes,
+  MAX_VIDEO_BYTES,
+  partCount,
+  sniffVideo,
+  VIDEO_ACCEPT,
+} from '@/lib/media/video';
+import { PartUploadError, uploadParts } from '@/lib/media/part-upload';
+import {
+  abortLessonVideoUpload,
   finishLessonVideoUpload,
+  lessonVideoUploadedParts,
   removeLessonVideo,
   setVideoRetention,
+  signLessonVideoParts,
   startLessonVideoUpload,
 } from '@/app/actions/video';
 import type { AdminState } from '@/app/actions/admin';
 
 const IDLE: AdminState = { ok: false };
 
+/** An upload begun on this machine, kept so a reload can resume it. */
+interface Pending {
+  key: string;
+  uploadId: string;
+  partSize: number;
+  name: string;
+  size: number;
+  lastModified: number;
+}
+
+const pendingKey = (lessonId: string, classId: string) =>
+  `talibalim-video-upload:${lessonId}:${classId}`;
+
+function readPending(lessonId: string, classId: string): Pending | null {
+  try {
+    const raw = window.localStorage.getItem(pendingKey(lessonId, classId));
+    return raw ? (JSON.parse(raw) as Pending) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writePending(lessonId: string, classId: string, pending: Pending | null) {
+  try {
+    if (pending) window.localStorage.setItem(pendingKey(lessonId, classId), JSON.stringify(pending));
+    else window.localStorage.removeItem(pendingKey(lessonId, classId));
+  } catch {
+    /* Only the resume after a reload is lost. */
+  }
+}
+
 /**
- * Upload a lesson video straight to R2.
- *
- * `XMLHttpRequest`, not `fetch`, and that is the whole reason this is not three
- * lines: fetch has no upload-progress event, and a two-gigabyte upload with no
- * visible progress is indistinguishable from a hang. A teacher watching a
- * motionless button for twenty minutes will close the tab, which is the one
- * outcome that wastes the whole upload.
+ * Can this browser play the file? Asked of a hidden `<video>` before anything
+ * is sent: an iPhone's HEVC .mov, for one, is a valid file most PCs cannot
+ * show. Undecided after a few seconds counts as yes — this warns, it never
+ * blocks on its own.
+ */
+function playableHere(file: File): Promise<boolean> {
+  return new Promise((resolve) => {
+    const video = document.createElement('video');
+    const url = URL.createObjectURL(file);
+    let settled = false;
+    const done = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      video.removeAttribute('src');
+      video.load();
+      URL.revokeObjectURL(url);
+      resolve(ok);
+    };
+    const timer = window.setTimeout(() => done(true), 8000);
+    video.preload = 'metadata';
+    video.muted = true;
+    video.onloadedmetadata = () => done(video.videoWidth > 0);
+    video.onerror = () => done(false);
+    video.src = url;
+  });
+}
+
+/**
+ * Upload a lesson video straight to R2, in parts.
  *
  * The file never touches our server. A Server Action body is capped at a few
  * megabytes and a Vercel function would be paying for bandwidth to forward
- * bytes it has no interest in — so the browser PUTs to Cloudflare against a
- * signature, and the server afterwards reads the first bytes back to decide
+ * bytes it has no interest in — so the browser PUTs to Cloudflare against
+ * signatures, and the server afterwards reads the first bytes back to decide
  * whether what arrived is really a video.
+ *
+ * In parts (`uploadParts`), because one PUT of a long recording was lost whole
+ * to a single dropped connection and reported only as « refused or
+ * interrupted ». A drop now costs one part; offline, the upload waits and goes
+ * on by itself; and the same file chosen again after a reload or a failure
+ * resumes where it stopped, from the parts R2 already holds.
  */
 export function LessonVideoUpload({
   lessonId,
@@ -60,74 +130,154 @@ export function LessonVideoUpload({
   const hasVideo = (provider === 'r2' && bytes > 0) || uploaded !== null;
   const shownBytes = uploaded?.bytes ?? bytes;
 
+  /** Cancels the upload in progress. */
+  const cancelRef = useRef<AbortController | null>(null);
+  /** Waiting for the connection, or for a retry. */
+  const [waiting, setWaiting] = useState(false);
+  /** Part of the file was already in R2 from an earlier try. */
+  const [resumed, setResumed] = useState(false);
+
+  // Closing the tab mid-upload asks first. (It would resume, but only once the
+  // same file is chosen again.)
+  useEffect(() => {
+    if (percent === null) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [percent]);
+
   const send = useCallback(
     async (file: File) => {
       setState(IDLE);
+      setResumed(false);
 
-      // Refused here rather than after twenty minutes of uploading. The server
+      // Refused here rather than after an hour of uploading. The server
       // checks the MEASURED size afterwards regardless — this is a courtesy,
       // not the rule.
       if (file.size > MAX_VIDEO_BYTES) {
         setState({ ok: false, error: 'videoTooLarge' });
         return;
       }
-      const contentType = file.type === 'video/webm' ? 'video/webm' : 'video/mp4';
 
-      const ticket = await startLessonVideoUpload({
-        lessonId,
-        classId,
-        contentType,
-        size: file.size,
-      });
-      if (!ticket.ok || !ticket.url || !ticket.key) {
-        setState(ticket);
+      // The container, from the file's own first bytes, before anything is
+      // sent: an .avi is refused now, not after the upload. The server reads
+      // the same bytes back afterwards and decides for itself.
+      const kind = sniffVideo(new Uint8Array(await file.slice(0, 16).arrayBuffer()));
+      if (!kind) {
+        setState({ ok: false, error: 'notAVideo' });
         return;
       }
+      if (!(await playableHere(file)) && !window.confirm(t('videoUnplayableConfirm'))) return;
+      const contentType = kind === 'webm' ? 'video/webm' : 'video/mp4';
 
+      // The same file, begun before a reload or a failure: carry on from the
+      // parts R2 already holds.
+      let pending = readPending(lessonId, classId);
+      let done: number[] = [];
+      if (
+        pending &&
+        (pending.name !== file.name ||
+          pending.size !== file.size ||
+          pending.lastModified !== file.lastModified)
+      ) {
+        pending = null;
+      }
+      if (pending) {
+        const held = await lessonVideoUploadedParts({
+          lessonId,
+          key: pending.key,
+          uploadId: pending.uploadId,
+        });
+        if (held.ok && held.parts && !held.gone) {
+          done = held.parts;
+          setResumed(done.length > 0);
+        } else {
+          pending = null;
+        }
+      }
+      if (!pending) {
+        const ticket = await startLessonVideoUpload({
+          lessonId,
+          classId,
+          contentType,
+          size: file.size,
+        });
+        if (!ticket.ok || !ticket.key || !ticket.uploadId || !ticket.partSize) {
+          setState(ticket);
+          return;
+        }
+        pending = {
+          key: ticket.key,
+          uploadId: ticket.uploadId,
+          partSize: ticket.partSize,
+          name: file.name,
+          size: file.size,
+          lastModified: file.lastModified,
+        };
+        writePending(lessonId, classId, pending);
+      }
+      const upload = pending;
+
+      const cancel = new AbortController();
+      cancelRef.current = cancel;
       setPercent(0);
       try {
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.open('PUT', ticket.url!);
-          xhr.setRequestHeader('Content-Type', contentType);
-          xhr.upload.onprogress = (e) => {
-            if (e.lengthComputable) setPercent(Math.round((e.loaded / e.total) * 100));
-          };
-          xhr.onload = () =>
-            xhr.status >= 200 && xhr.status < 300
-              ? resolve()
-              : reject(new Error(`R2 answered ${xhr.status}`));
-          // A CORS refusal and a dropped connection both land here with no
-          // detail — the browser does not tell us which. The message says so,
-          // and names the one test that can tell them apart, rather than
-          // guessing at one of the two.
-          xhr.onerror = () =>
-            reject(
-              new Error(
-                'the upload was refused or interrupted — run Admin → Diagnostic → ' +
-                  '« Tester l’envoi depuis le navigateur », which reproduces this ' +
-                  'exact request and names the missing rule',
-              ),
-            );
-          xhr.onabort = () => reject(new Error('the upload was cancelled'));
-          xhr.send(file);
+        await uploadParts({
+          file,
+          partSize: upload.partSize,
+          done,
+          sign: async (parts) => {
+            const signed = await signLessonVideoParts({
+              lessonId,
+              key: upload.key,
+              uploadId: upload.uploadId,
+              parts,
+            });
+            if (!signed.ok || !signed.urls) {
+              throw new PartUploadError(signed.detail ?? signed.error ?? 'signing failed', 0);
+            }
+            return signed.urls;
+          },
+          onProgress: (sent, total) => setPercent(Math.floor((sent / total) * 100)),
+          onWaiting: setWaiting,
+          signal: cancel.signal,
         });
       } catch (cause) {
         setPercent(null);
+        setWaiting(false);
+        cancelRef.current = null;
+        if (cancel.signal.aborted) {
+          // Cancelled: the parts already sent are thrown away, not kept.
+          writePending(lessonId, classId, null);
+          await abortLessonVideoUpload({ lessonId, key: upload.key, uploadId: upload.uploadId });
+          return;
+        }
+        // Kept: choosing the same file again carries on from here.
         setState({
           ok: false,
           error: 'uploadFailed',
-          detail: cause instanceof Error ? cause.message : String(cause),
+          detail: `${cause instanceof Error ? cause.message : String(cause)} — ${t('videoResumeHint')}`,
         });
         return;
       }
 
       setPercent(null);
-      const result = await finishLessonVideoUpload({ lessonId, classId, key: ticket.key });
+      setWaiting(false);
+      cancelRef.current = null;
+      const result = await finishLessonVideoUpload({
+        lessonId,
+        classId,
+        key: upload.key,
+        uploadId: upload.uploadId,
+        parts: partCount(file.size, upload.partSize),
+      });
+      // Joined (or refused for its content): either way there is nothing left
+      // to resume. A missing part keeps the upload for the next try.
+      if (result.ok || result.error !== 'uploadFailed') writePending(lessonId, classId, null);
       if (result.ok) setUploaded({ bytes: file.size });
       setState(result);
     },
-    [lessonId, classId],
+    [lessonId, classId, t],
   );
 
   return (
@@ -143,7 +293,7 @@ export function LessonVideoUpload({
       <input
         ref={inputRef}
         type="file"
-        accept="video/mp4,video/webm"
+        accept={VIDEO_ACCEPT}
         className="sr-only"
         onChange={(event) => {
           const file = event.currentTarget.files?.[0];
@@ -160,9 +310,27 @@ export function LessonVideoUpload({
               style={{ width: `${percent}%` }}
             />
           </div>
-          <p className="mt-1.5 text-[11px] text-ink-muted" role="status">
-            {t('videoUploading', { percent })}
-          </p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <p className="text-[11px] text-ink-muted" role="status">
+              {t('videoUploading', { percent })}
+              {resumed && ` · ${t('videoResumed')}`}
+            </p>
+            {waiting && (
+              <p className="text-[11px] text-gold-700" role="status">
+                {t('videoWaiting')}
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm(t('videoCancelConfirm'))) cancelRef.current?.abort();
+              }}
+              className="ms-auto inline-flex items-center gap-1 text-[11px] text-ink-muted hover:text-red-600"
+            >
+              <X className="size-3" aria-hidden="true" />
+              {t('videoCancel')}
+            </button>
+          </div>
         </div>
       ) : (
         <div className="mt-3 flex flex-wrap items-center gap-2">

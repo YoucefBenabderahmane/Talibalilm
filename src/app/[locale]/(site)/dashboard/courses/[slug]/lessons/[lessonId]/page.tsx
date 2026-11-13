@@ -84,9 +84,14 @@ export default async function LessonPage({
   // A short-lived signature for an uploaded video, minted only once the read
   // above has succeeded — that read is RLS-gated, so it IS the paywall. The
   // bucket stays private: there is no public base URL anywhere in this app.
+  //
+  // Six hours, not one: the player keeps asking the bucket for the next part of
+  // the file as it plays, so a signature that runs out mid-lesson stopped a
+  // two-hour recording partway through. Six covers the longest class with
+  // pauses; a link that escapes still dies the same day.
   const videoSrc =
     content?.videoProvider === 'r2' && content.videoId
-      ? await signDownload(content.videoId, 3600)
+      ? await signDownload(content.videoId, 6 * 3600)
       : null;
 
   // The group's support documents, each signed only after the RLS-gated read
