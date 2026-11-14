@@ -35,6 +35,8 @@ export interface OutlineClassContent {
   videoProvider: string;
   videoBytes: number;
   videoExpiresAt: string | null;
+  /** When the uploaded video landed, so the office can tell which file is in place. */
+  videoUploadedAt: string | null;
   /** The support documents the group has been given for this lesson. */
   documents: LessonDocument[];
 }
@@ -411,6 +413,7 @@ function LessonRow({
                   provider={selected?.videoProvider ?? 'none'}
                   bytes={selected?.videoBytes ?? 0}
                   expiresAt={selected?.videoExpiresAt ?? null}
+                  uploadedAt={selected?.videoUploadedAt ?? null}
                 />
 
                 {/*
