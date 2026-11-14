@@ -29,6 +29,23 @@ $$;
 grant usage on schema public to anon, authenticated, service_role;
 grant usage on schema auth to anon, authenticated, service_role;
 
+-- Supabase's default privileges. On a real project every function, table and
+-- sequence created in `public` is granted to the three API roles the moment
+-- it exists, so `revoke … from public` alone closes nothing to a student.
+-- Without these lines the harness was stricter than production: a function
+-- the migrations meant for the service role looked closed here and was open
+-- there. The grants test (rls_function_grants.sql) depends on this being
+-- faithful.
+alter default privileges in schema public grant all on functions to anon, authenticated, service_role;
+alter default privileges in schema public grant all on tables    to anon, authenticated, service_role;
+alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
+
+-- A canary for that test: created under those defaults, before any migration
+-- runs, it must be executable by `authenticated` — exactly as a function
+-- created on Supabase without an explicit revoke is.
+create function public.harness_probe() returns integer
+language sql immutable as $$ select 1 $$;
+
 -- The columns the migrations actually read. `email_confirmed_at` is the one
 -- that matters: the spam sweep asks whether a signup ever confirmed, and a
 -- harness without it fails while APPLYING the migration rather than at an

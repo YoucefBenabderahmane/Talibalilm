@@ -44,16 +44,18 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = await createClient();
+  // `getUser()` revalidates the JWT; the insert policy below would refuse a
+  // forged id anyway, but identity is decided the same way everywhere else.
   const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  if (!session?.user) {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
     return NextResponse.json({ ok: false, error: 'notAdmin' }, { status: 401 });
   }
 
   const { error } = await supabase.from('live_messages').insert({
     session_id: parsed.data.sessionId,
-    user_id: session.user.id,
+    user_id: user.id,
     body: parsed.data.body,
   });
 

@@ -18,12 +18,17 @@ begin
   if not ok then raise exception 'FAILED: %', what; end if;
   raise notice '  ok  %', what;
 end $$;
+-- Callable from the roles the tests switch to: since the function-grants
+-- migration a new function starts closed, as it does on Supabase once that
+-- migration has run.
+grant execute on function public.assert(boolean, text) to anon, authenticated, service_role;
 
 /** Can the current role read this lesson's gated content? */
 create or replace function public.can_read(lid uuid)
 returns boolean language sql stable as $$
   select exists (select 1 from public.lesson_content where lesson_id = lid);
 $$;
+grant execute on function public.can_read(uuid) to anon, authenticated, service_role;
 
 -- --- fixtures -------------------------------------------------------------
 

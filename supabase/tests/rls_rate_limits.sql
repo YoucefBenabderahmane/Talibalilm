@@ -17,6 +17,10 @@ begin
   if not ok then raise exception 'FAILED: %', what; end if;
   raise notice '  ok  %', what;
 end $$;
+-- Callable from the roles the tests switch to: since the function-grants
+-- migration a new function starts closed, as it does on Supabase once that
+-- migration has run.
+grant execute on function public.assert(boolean, text) to anon, authenticated, service_role;
 
 \echo ''
 \echo '=== rate limiting ==='
@@ -88,10 +92,19 @@ begin
     not has_table_privilege('authenticated', 'public.rate_limit_counters', 'UPDATE'),
     'nor tamper with a count to buy themselves more attempts');
 
-  -- The function is the only door, and it is open to the roles that need it.
+  -- The function is the only door, and only the server holds the key. It
+  -- takes the bucket, the limit and the window from its caller, so while it
+  -- was open to `anon` anyone with the public key could fill another person's
+  -- login bucket; the limiter now calls it as the service role.
   perform public.assert(
-    has_function_privilege('anon', 'public.rate_limit_hit(text, integer, integer)', 'EXECUTE'),
-    'the login form — used before sign-in — can still call the limiter');
+    not has_function_privilege('anon', 'public.rate_limit_hit(text, integer, integer)', 'EXECUTE'),
+    'a visitor cannot call the limiter directly and name somebody else''s bucket');
+  perform public.assert(
+    not has_function_privilege('authenticated', 'public.rate_limit_hit(text, integer, integer)', 'EXECUTE'),
+    'nor can a signed-in student');
+  perform public.assert(
+    has_function_privilege('service_role', 'public.rate_limit_hit(text, integer, integer)', 'EXECUTE'),
+    'the server still can — the login form is limited through it, before sign-in');
 
   select count(*) into c from public.rate_limit_counters;
   perform public.assert(c >= 3, 'the definer function did the writes the caller could not');

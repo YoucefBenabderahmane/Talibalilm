@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { supabaseConfigured } from '@/lib/env';
+import { safeNextPath } from '@/lib/auth/next-path';
 
 /**
  * Where every emailed link lands: verification, magic link and password
@@ -15,10 +16,8 @@ export async function GET(request: NextRequest) {
   const code = searchParams.get('code');
   const tokenHash = searchParams.get('token_hash');
   const type = searchParams.get('type');
-  const rawNext = searchParams.get('next') ?? '/dashboard';
-
   // Never redirect off-origin on the strength of a query parameter.
-  const next = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '/dashboard';
+  const next = safeNextPath(searchParams.get('next'));
 
   const fail = (reason: string) =>
     NextResponse.redirect(`${origin}/login?error=${encodeURIComponent(reason)}`);

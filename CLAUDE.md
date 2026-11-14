@@ -27,7 +27,7 @@ Two data-access paths exist. Pick by the job, and keep the boundary:
 | Path | Use it for | Why |
 |---|---|---|
 | **Supabase client** (`@/lib/supabase/server`, `createClient()`) | auth, the public catalogue, every admin screen read | anon key, RLS applies; the policy tests already cover these reads |
-| **Supabase admin** (`createAdminClient()`) | settling a verified PayPal capture, the sweep | service role, bypasses RLS — never reachable from unvalidated input |
+| **Supabase admin** (`createAdminClient()`) | settling a verified PayPal capture, the sweep, the rate limiter's counter, the PayPal webhook ledger | service role, bypasses RLS — never reachable from unvalidated input |
 | **`SECURITY DEFINER` RPC via the anon client** | admin grant/revoke, coupon generation | gated on `is_admin()` inside; `auth.uid()` stays the real admin, so the audit names them |
 | **Prisma** (`@/lib/db/prisma`) | new admin/commerce/job code that wants a typed query builder | always `dbAs(userId, …)` except the webhook settlement path, which is the one place the owner connection is correct |
 
@@ -164,7 +164,19 @@ or crash the page.
 Shared rate limiting is now built (B8): `rate-limit.ts` calls the
 `rate_limit_hit` Postgres RPC, so the counter is durable and shared across
 serverless instances instead of living in one instance's memory. The limiter
-fails open — a throttle-check outage must not take down login.
+fails open — a throttle-check outage must not take down login. It calls the
+RPC as the service role: the function takes its bucket and limit from the
+caller, so it is closed to `anon` and `authenticated` like every other
+server-only function.
+
+**Function grants: `revoke … from public` is not enough on Supabase.** The
+project's default privileges grant EXECUTE on every new `public` function to
+`anon` and `authenticated` directly. A server-only function must also
+`revoke execute … from anon, authenticated`; `rls_function_grants.sql` lists
+the closed ones and the harness replicates those defaults, so a new function
+that forgets this fails in CI. Since the function-grants migration a new
+function starts with no grant at all — open it on purpose, to the role that
+needs it.
 
 Still deferred, pending decisions from the school and its accountant: GDPR
 erasure vs. record retention (B9, in progress) and real legal text. VAT and

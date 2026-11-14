@@ -9,6 +9,7 @@ import { FormMessage } from '@/components/auth/AuthCard';
 import { SubmitButton } from '@/components/auth/SubmitButton';
 import { Turnstile, type TurnstileHandle } from '@/components/auth/Turnstile';
 import { login, type ActionState } from '@/app/actions/auth';
+import { safeNextPath } from '@/lib/auth/next-path';
 
 const EMPTY: ActionState = { ok: false };
 
@@ -35,7 +36,7 @@ export function LoginForm() {
   // it safe; this keeps an attacker-supplied absolute URL from being reflected
   // into the page's markup in the first place.
   const rawNext = query?.get('next') ?? null;
-  const next = rawNext?.startsWith('/') && !rawNext.startsWith('//') ? rawNext : undefined;
+  const next = rawNext && safeNextPath(rawNext, '') ? rawNext : undefined;
   const notice = query?.get('reset') === '1' ? t('resetDone') : undefined;
   const error = query?.get('error');
   const calloutError =

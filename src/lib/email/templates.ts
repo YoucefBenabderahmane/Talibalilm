@@ -1,5 +1,6 @@
 import 'server-only';
 import type { Mail } from './send';
+import { escapeHtml } from './escape';
 
 /**
  * The messages the school sends. Two languages, plain and legible, no images
@@ -26,14 +27,20 @@ const BRAND = '#128a68';
 const INK = '#16221f';
 const MUTED = '#5f736d';
 
+/**
+ * Every value is escaped on its way in. Some of them were typed by a
+ * stranger — the name on a registration, the subject of a contact message —
+ * and interpolated raw they would become live markup in the office's inbox,
+ * dressed as our own mail. No template carries HTML of its own.
+ */
 function render(shell: Shell): string {
   const rows = shell.lines
     .map(
       (l) => `
       <tr>
         <td style="padding:10px 0;border-top:1px solid #e5ebe9">
-          <div style="font-weight:600;color:${INK}">${l.title}</div>
-          <div style="color:${MUTED};font-size:14px">${l.detail}</div>
+          <div style="font-weight:600;color:${INK}">${escapeHtml(l.title)}</div>
+          <div style="color:${MUTED};font-size:14px">${escapeHtml(l.detail)}</div>
         </td>
       </tr>`,
     )
@@ -43,14 +50,14 @@ function render(shell: Shell): string {
     <table role="presentation" width="100%" style="max-width:520px;margin:0 auto;background:#fff;border:1px solid #e5ebe9;border-radius:14px">
       <tr><td style="padding:28px 28px 8px">
         <div style="font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:${BRAND};font-weight:600">Institut Talib Alim</div>
-        <h1 style="margin:12px 0 0;font-size:22px;color:${INK}">${shell.heading}</h1>
-        <p style="color:${MUTED};line-height:1.6">${shell.intro}</p>
+        <h1 style="margin:12px 0 0;font-size:22px;color:${INK}">${escapeHtml(shell.heading)}</h1>
+        <p style="color:${MUTED};line-height:1.6">${escapeHtml(shell.intro)}</p>
       </td></tr>
       <tr><td style="padding:0 28px">
         <table role="presentation" width="100%">${rows}</table>
       </td></tr>
       <tr><td style="padding:16px 28px 28px">
-        <p style="color:${MUTED};font-size:14px;line-height:1.6">${shell.outro}</p>
+        <p style="color:${MUTED};font-size:14px;line-height:1.6">${escapeHtml(shell.outro)}</p>
       </td></tr>
     </table>
   </body></html>`;

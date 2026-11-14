@@ -1113,6 +1113,12 @@ export interface Database {
         Update: never;
         Relationships: [];
       };
+      paypal_webhook_events: {
+        Row: { event_id: string; event_type: string; order_id: string | null; received_at: string };
+        Insert: { event_id: string; event_type: string; order_id?: string | null };
+        Update: never;
+        Relationships: [];
+      };
       live_slides: {
         Row: {
           id: string;

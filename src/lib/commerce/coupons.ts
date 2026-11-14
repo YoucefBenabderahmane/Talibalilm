@@ -1,6 +1,8 @@
 import 'server-only';
+import { headers } from 'next/headers';
 import { createAdminClient } from '@/lib/supabase/server';
 import { supabaseConfigured } from '@/lib/env';
+import { clientKey, rateLimit } from '@/lib/rate-limit';
 import { couponDiscount, type AppliedCoupon } from '@/lib/commerce/quote';
 
 /**
@@ -34,6 +36,17 @@ export async function previewCoupon(
 ): Promise<CouponPreview> {
   if (!code) return { status: 'none' };
   if (!supabaseConfigured) return { status: 'invalid', reason: 'unknown' };
+
+  // The payment step previews whatever code the checkout cookie holds, and
+  // the cookie is edited as easily as the form — so this path has to carry
+  // its own limit or the apply button's limit means nothing. Wider than that
+  // one, because every reload of the step is a preview too; a refusal reads as
+  // an unknown code, which gives a guesser nothing.
+  const { ok } = await rateLimit(clientKey(await headers(), 'coupon-preview'), {
+    limit: 30,
+    windowMs: 15 * 60 * 1000,
+  });
+  if (!ok) return { status: 'invalid', reason: 'unknown' };
 
   const supabase = createAdminClient();
   const { data, error } = await supabase

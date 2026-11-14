@@ -7,6 +7,7 @@ import { getLocale, getTranslations } from 'next-intl/server';
 import { createAdminClient, createClient } from '@/lib/supabase/server';
 import { envProblem, supabaseConfigured, siteUrl } from '@/lib/env';
 import { classifyAuthError } from '@/lib/auth/errors';
+import { safeNextPath } from '@/lib/auth/next-path';
 import { clientKey, rateLimit } from '@/lib/rate-limit';
 import { reportError } from '@/lib/observability/report';
 import { notifyOfficeOfRegistration } from '@/lib/auth/registrations';
@@ -143,9 +144,7 @@ export async function login(_prev: ActionState, formData: FormData): Promise<Act
   if (error) return { ok: false, message: await authErrorMessage(error.message) };
 
   // Same-origin paths only, so `?next=` cannot become an open redirect.
-  const next = parsed.data.next;
-  const target = next && next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard';
-  redirect(target);
+  redirect(safeNextPath(parsed.data.next));
 }
 
 /**
