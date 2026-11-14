@@ -7,6 +7,7 @@ import {
   PayPalRefusal,
 } from '@/lib/paypal/client';
 import { markOrderFailed, settleOrder } from '@/lib/commerce/orders';
+import { canCapture } from '@/lib/commerce/capture-guard';
 import { paypalFailurePath } from '@/lib/commerce/paypal-failure';
 import { checkoutTarget } from '@/app/actions/pay';
 import { createAdminClient } from '@/lib/supabase/server';
@@ -57,6 +58,11 @@ export async function GET(request: NextRequest) {
   if (order.status === 'paid') {
     return NextResponse.redirect(`${base}${await checkoutTarget(order.id)}`);
   }
+
+  // Cancelled by the sweep while the student was away at PayPal, or failed on
+  // an earlier try: capturing now would take the money for an order that can
+  // no longer be settled. Back to the module to start a fresh checkout.
+  if (!canCapture(order.status)) return fail('unexpected');
 
   const config = await getPayPalConfig();
   if (!config) return fail('unavailable');

@@ -11,6 +11,7 @@ import { currentViewer, isStaff } from '@/lib/auth/guards';
 import { isAllowedProviderEmail } from '@/lib/validation/email-providers';
 import { getStudentProfile, isApproved, profileComplete } from '@/lib/data/profile';
 import { loadBasket } from '@/lib/commerce/basket';
+import { canCapture } from '@/lib/commerce/capture-guard';
 import { couponDiscount, MixedCurrencyError } from '@/lib/commerce/quote';
 import { clearSelection, EMPTY_SELECTION, writeSelection } from '@/lib/commerce/selection';
 import { listProducts } from '@/lib/data/commerce';
@@ -288,6 +289,9 @@ export async function completePayPalCheckout(
     const owner = installment?.orders?.user_id ?? null;
     if (!installment || owner !== user.id) return { ok: false, error: 'payUnexpected' };
     if (installment.status === 'paid') return { ok: true, orderId: installment.order_id };
+    // A cancelled instalment is not captured: the money would move and the
+    // settlement would have nothing to settle it against.
+    if (!canCapture(installment.status)) return { ok: false, error: 'payUnexpected' };
     targetOrderId = installment.order_id;
   }
 
@@ -295,6 +299,12 @@ export async function completePayPalCheckout(
     await clearSelection();
     return { ok: true, orderId: order.id };
   }
+
+  // Only a pending order is captured. The sweep cancels a checkout left open
+  // for half an hour and a refused capture marks the order failed; both used
+  // to be captured here anyway, after which `settleOrder` could not mark them
+  // paid and the student had paid for nothing. The money must not move first.
+  if (order && !canCapture(order.status)) return { ok: false, error: 'payUnexpected' };
 
   const config = await getPayPalConfig();
   if (!config) return { ok: false, error: 'unavailable' };

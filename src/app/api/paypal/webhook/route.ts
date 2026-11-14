@@ -1,7 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { fromPayPalAmount, getPayPalConfig, verifyWebhookSignature } from '@/lib/paypal/client';
 import { revokeOrder, settleOrder } from '@/lib/commerce/orders';
+import { createAdminClient } from '@/lib/supabase/server';
 import { reportError } from '@/lib/observability/report';
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * PayPal's own account of what happened.
@@ -47,6 +50,7 @@ export async function POST(request: NextRequest) {
   }
 
   const event = JSON.parse(raw) as {
+    id?: string;
     event_type?: string;
     resource?: {
       id?: string;
@@ -65,6 +69,27 @@ export async function POST(request: NextRequest) {
   // is the only field here we trust to identify the order, and even then the
   // amount is checked against the row before anything is granted.
   const orderId = event.resource?.custom_id;
+
+  // Counted once. PayPal redelivers an event until it gets a 2xx and sends
+  // more than one for a single refund, and `revoke_order_entitlements` used to
+  // subtract the order's days on every call — so a refund could take back
+  // years the student had bought in other orders. The event id is written
+  // before anything is acted on; a second write of the same id is a replay.
+  // A ledger failure is reported but does not drop a payment.
+  if (event.id) {
+    const { error } = await createAdminClient()
+      .from('paypal_webhook_events')
+      .insert({
+        event_id: event.id,
+        event_type: kind,
+        order_id: orderId && UUID.test(orderId) ? orderId : null,
+      });
+    if (error?.code === '23505') return NextResponse.json({ duplicate: event.id });
+    if (error) reportError('paypal.webhook.ledger', error, { eventId: event.id, kind });
+  } else {
+    reportError('paypal.webhook.noEventId', new Error('webhook event without an id'), { kind });
+  }
+
   if (!orderId) return NextResponse.json({ ignored: 'no_reference' });
 
   // The money went back, or never arrived. Access has to follow it. Before

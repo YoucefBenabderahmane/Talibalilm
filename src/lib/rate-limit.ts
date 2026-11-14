@@ -13,8 +13,14 @@
  * and blocking every login on a throttle-check outage trades a security speed
  * bump for a site-wide outage. Supabase Auth's own per-project limits remain the
  * backstop for the auth endpoints underneath this.
+ *
+ * Called as the service role, not as the visitor. `rate_limit_hit` takes the
+ * bucket, the limit and the window from its caller, so while it was open to
+ * `anon` anyone with the public key could fill another person's `login:<ip>`
+ * bucket and lock them out, or pass a window of years and leave rows the
+ * pruner never reaches. Only this module names buckets now.
  */
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/server';
 import { supabaseConfigured } from '@/lib/env';
 import { reportError } from '@/lib/observability/report';
 
@@ -36,9 +42,12 @@ export async function rateLimit(
   // Nothing to count against when the database is not wired up. The endpoints
   // this guards already refuse to do their real work in that state.
   if (!supabaseConfigured) return { ok: true, retryAfterSeconds: 0 };
+  // The same fail-open when the service key is not set (a preview without
+  // secrets): nothing to count with, and nothing to report on every request.
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) return { ok: true, retryAfterSeconds: 0 };
 
   try {
-    const supabase = await createClient();
+    const supabase = createAdminClient();
     const { data, error } = await supabase.rpc('rate_limit_hit', {
       bucket: key,
       max_hits: limit,
