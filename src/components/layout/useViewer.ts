@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { usePathname } from '@/i18n/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { supabaseConfigured } from '@/lib/env';
 
@@ -33,9 +32,11 @@ export interface HeaderViewer {
  *
  * The session can also change in a page we are not navigating: an email
  * confirmed in another tab, or a magic link opened in a second window. So the
- * read is repeated when the tab regains focus, when it becomes visible again,
- * and on every route change — otherwise the header keeps offering a login to
- * somebody who has already signed in.
+ * read is repeated when the tab regains focus and when it becomes visible
+ * again — otherwise the header keeps offering a login to somebody who has
+ * already signed in. Not on every route change any more: that was one auth
+ * round trip from the browser on every click, and a sign-in or sign-out in
+ * this tab reaches `onAuthStateChange` without it.
  *
  * This is presentation only. Nothing here guards anything: the dashboard is
  * protected by the middleware and by the RLS policies, both of which hold
@@ -43,7 +44,6 @@ export interface HeaderViewer {
  */
 export function useViewer(): HeaderViewer {
   const [viewer, setViewer] = useState<HeaderViewer>({ signedIn: null });
-  const pathname = usePathname();
 
   useEffect(() => {
     if (!supabaseConfigured) {
@@ -84,7 +84,7 @@ export function useViewer(): HeaderViewer {
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [pathname]);
+  }, []);
 
   return viewer;
 }

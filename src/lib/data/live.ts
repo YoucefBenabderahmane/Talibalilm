@@ -288,9 +288,13 @@ export async function listSlides(sessionId: string): Promise<SlideView[]> {
  * A signed link for one slide, minted only for a caller `can_read_slide()`
  * approved.
  *
- * Every slide read goes through here — the preparation screen, the room, the
- * deck re-read below — so the answer to "may this person see this file?" is
- * one function and not three that could drift apart.
+ * Every single-slide read goes through here — the preparation screen, the
+ * page the room signs on demand — so the answer to "may this person see this
+ * file?" is one function and not three that could drift apart. The one
+ * exception is `roomSlides` below, which signs the rows a policy-gated read
+ * has just returned: the policy and `can_read_slide()` are the same predicate
+ * (`is_staff()` or `can_join_live(session)`), so asking again per slide was
+ * only a round trip per page.
  */
 export async function slideUrl(key: string): Promise<string | null> {
   if (!supabaseConfigured || !r2Configured) return null;
@@ -338,10 +342,14 @@ export async function signSlide(sessionId: string, slideId: string): Promise<str
  * The deck as it stands, for a viewer already in the room.
  *
  * Called when the teacher adds slides mid-lesson and when a viewer opens the
- * slides panel: each browser reads it for itself. The URLs are minted per
- * caller through `can_read_slide()`, so a slide added during a class is
- * visible to the students entitled to it and to nobody else — which a URL
- * copied out of the teacher's page would not have been.
+ * slides panel: each browser reads it for itself. The rows come back through
+ * `live_slides`' own policies — `is_staff()`, or `can_join_live(session_id)`
+ * for the caller — so a slide added during a class is visible to the students
+ * entitled to it and to nobody else, which a URL copied out of the teacher's
+ * page would not have been. The signatures are then minted here, locally:
+ * `can_read_slide()` evaluates the very same predicate, and asking it once
+ * more for every row was one RPC round trip per page, four hundred and fifty
+ * for a long deck, each time the panel opened.
  */
 export async function roomSlides(
   sessionId: string,
@@ -361,7 +369,8 @@ export async function roomSlides(
   }
 
   const rows = data ?? [];
-  const urls = await Promise.all(rows.map((r) => slideUrl(r.storage_key)));
+  if (!r2Configured) return rows.map((r) => ({ id: r.id, url: null, filename: r.filename }));
+  const urls = await Promise.all(rows.map((r) => signDownload(r.storage_key)));
   return rows.map((r, i) => ({ id: r.id, url: urls[i] ?? null, filename: r.filename }));
 }
 
