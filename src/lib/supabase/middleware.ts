@@ -53,13 +53,15 @@ export async function refreshSession(
     },
   );
 
-  // getUser(), not getSession(): getSession() trusts the cookie as-is, while
-  // getUser() revalidates the JWT against the auth server. In middleware,
-  // which is what protected routes lean on, the difference is the whole
-  // security guarantee.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // getClaims(), not getSession(): getSession() trusts the cookie as-is. This
+  // first refreshes a token that is expiring (the cookie rewrite above), then
+  // checks the token's signature — locally, against the project's public
+  // signing key, when the project uses asymmetric keys; by asking the auth
+  // server, as getUser() did, when it still uses the legacy shared secret. A
+  // forged cookie is refused either way. The difference is one network round
+  // trip on every page view by every signed-in person, which getUser() paid
+  // unconditionally.
+  const { data } = await supabase.auth.getClaims();
 
-  return { userId: user?.id ?? null };
+  return { userId: data?.claims.sub ?? null };
 }

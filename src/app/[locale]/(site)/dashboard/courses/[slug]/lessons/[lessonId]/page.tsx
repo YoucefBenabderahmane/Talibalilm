@@ -1,6 +1,8 @@
+import { Suspense } from 'react';
 import { getTranslations, setRequestLocale } from 'next-intl/server';
 import { signDownload } from '@/lib/storage/r2';
 import { notFound, redirect } from 'next/navigation';
+import { after } from 'next/server';
 import type { Metadata } from 'next';
 import { CheckCircle2, Circle, ExternalLink, FileText, Lock, PlayCircle, Users } from 'lucide-react';
 import { Link } from '@/i18n/navigation';
@@ -60,17 +62,27 @@ export default async function LessonPage({
   const t = await getTranslations('learn');
   const tCourses = await getTranslations('courses');
 
-  // Only for the padlock icons in the sidebar — access to THIS lesson is
-  // decided by which content came back, not by this flag.
-  const hasAccess = await hasCourseAccess(course.id);
   const staff = isStaff(viewer);
+
+  // Three reads that do not depend on one another, in flight together: this
+  // page used to await nine round trips one after the other, and the
+  // teacher's "every click waits" was mostly that. `hasAccess` is only for the
+  // padlock icons in the sidebar — access to THIS lesson is decided by which
+  // content comes back below, not by this flag. The class lookup reads the
+  // viewer's own membership rows and nothing else, so asking before knowing
+  // whether they hold the course costs nothing it should not.
+  const [hasAccess, ownClassId, progress] = await Promise.all([
+    hasCourseAccess(course.id),
+    staff ? Promise.resolve(null) : getViewerClassId(course.id, viewer.id),
+    getCourseProgress(lessons.map((l) => l.id)),
+  ]);
 
   // Content is per group now. A holder reads their own class's row and nothing
   // else; a visitor reads the shared row of a public preview; staff read the
   // shared row (the admin edits class content from the module screen). A
   // holder with no group yet is asked to enter one rather than shown another
   // group's material.
-  const myClassId = hasAccess && !staff ? await getViewerClassId(course.id, viewer.id) : null;
+  const myClassId = hasAccess && !staff ? ownClassId : null;
   const needsClass = hasAccess && !staff && myClassId === null;
 
   const content = staff
@@ -107,9 +119,12 @@ export default async function LessonPage({
       )
     : [];
 
-  if (hasAccess) await touchEnrollment(course.id, viewer.id);
+  // The visit is noted after the response has gone out, not before: a write
+  // the student never sees must not be a round trip the page waits for.
+  if (hasAccess) {
+    after(() => touchEnrollment(course.id, viewer.id));
+  }
 
-  const progress = await getCourseProgress(lessons.map((l) => l.id));
   const done = progress.get(lesson.id)?.status === 'completed';
   const completedCount = lessons.filter((l) => progress.get(l.id)?.status === 'completed').length;
 
@@ -326,8 +341,12 @@ export default async function LessonPage({
             so it sits above the syllabus. Renders nothing when there is none —
             and nothing at all for a course the viewer does not hold, because
             the query behind it reads through RLS. */}
+        {/* Streamed: its two reads arrive after the lesson has painted rather
+            than holding the whole page back for them. */}
         <div className="mb-6 empty:mb-0">
-          <UpcomingClasses locale={locale} courseId={course.id} limit={3} />
+          <Suspense fallback={null}>
+            <UpcomingClasses locale={locale} courseId={course.id} limit={3} />
+          </Suspense>
         </div>
 
         <div className="rounded-[var(--radius-card)] border border-line bg-white p-5">
