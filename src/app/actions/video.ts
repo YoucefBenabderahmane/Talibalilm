@@ -15,6 +15,7 @@ import {
   listUploadedParts,
   r2Configured,
   readObjectHead,
+  signDownload,
   signPart,
   startMultipart,
 } from '@/lib/storage/r2';
@@ -297,6 +298,50 @@ export async function finishLessonVideoUpload(input: {
 /**
  * Take the video down.
  *
+ * A link to watch the uploaded video, for the teacher who uploaded it.
+ *
+ * Before this the editor showed only the file's size after an upload, and
+ * there was nowhere a teacher could check that the right recording was in
+ * place — the student page reads a different row for staff. The read here is
+ * the gate: `class_lesson_content` lets staff through by policy, and the key is
+ * then checked against the lesson before it is signed, so a row that somehow
+ * pointed elsewhere would still not be served. One hour covers watching it.
+ */
+export async function signLessonVideoPlayback(input: {
+  lessonId: string;
+  classId: string;
+}): Promise<AdminState & { url?: string }> {
+  const parsed = z
+    .object({ lessonId: z.string().uuid(), classId: z.string().uuid() })
+    .safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'invalid' };
+  const { lessonId, classId } = parsed.data;
+
+  const supabase = await staffClient();
+  const { data: row, error } = await supabase
+    .from('class_lesson_content')
+    .select('video_provider, video_id')
+    .eq('lesson_id', lessonId)
+    .eq('class_id', classId)
+    .maybeSingle();
+
+  if (error) {
+    reportError('video.playback', error, { lessonId, classId });
+    return { ok: false, error: 'saveFailed', detail: errorDetail(error) };
+  }
+  if (row?.video_provider !== 'r2' || !row.video_id || !isVideoKeyFor(row.video_id, lessonId)) {
+    return { ok: false, error: 'videoMissing' };
+  }
+  if (!r2Configured) return { ok: false, error: 'storageUnavailable' };
+
+  const url = await signDownload(row.video_id, 3600);
+  if (!url) {
+    return { ok: false, error: 'storageUnavailable', detail: 'signDownload returned null' };
+  }
+  return { ok: true, url };
+}
+
+/**
  * Available whenever one exists — the school asked to be able to remove a
  * recording at any time, and storage is billed monthly, so "remove" has to mean
  * the object is gone from the bucket rather than merely unlinked.
