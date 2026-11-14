@@ -88,6 +88,15 @@ export type RoomMessage =
        */
       stage?: string | null;
     }
+  /**
+   * Where the teacher's pointer is on the slide, as fractions of the page
+   * (0–1 from its top-left corner), so every browser can place it on its own
+   * copy whatever the size or the zoom. Sent lossy and often while she moves;
+   * `cursor-off` when the pointer leaves the page. A student's browser shows
+   * it over the slide, which is how the class follows the line she is on.
+   */
+  | { t: 'cursor'; x: number; y: number }
+  | { t: 'cursor-off' }
   | { t: 'ended' };
 
 export type RoomMessageKind = RoomMessage['t'];
@@ -107,6 +116,8 @@ const HOST_ONLY: ReadonlySet<RoomMessageKind> = new Set<RoomMessageKind>([
   'rec',
   'deck',
   'focus',
+  'cursor',
+  'cursor-off',
   'ended',
 ]);
 

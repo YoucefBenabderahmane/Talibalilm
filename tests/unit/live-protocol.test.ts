@@ -21,6 +21,10 @@ describe('acceptFrom — what a student may not announce', () => {
       { t: 'rec', on: true },
       { t: 'deck' },
       { t: 'focus', tab: 'board', boardOnStage: true },
+      // A student's browser must not be able to walk a false pointer over
+      // the page the class is reading.
+      { t: 'cursor', x: 0.5, y: 0.25 },
+      { t: 'cursor-off' },
       { t: 'ended' },
     ] as RoomMessage[]) {
       expect(acceptFrom(m, false)).toBe(false);

@@ -42,6 +42,7 @@ import { clearSlides, removeSlide } from '@/app/actions/slides';
 import { removeAt } from '@/lib/live/deck';
 import { groupAt, groupDeck } from '@/lib/live/deck-groups';
 import { PEN_COLORS, type Stroke } from '@/lib/live/marks';
+import { createCursorFeed, type CursorPosition } from '@/lib/live/cursor-feed';
 import type { SlideAnnotate } from './SlidePen';
 import type { BoardOp, RoomMessage } from '@/lib/live/protocol';
 import type { LiveRoomState } from '@/lib/supabase/database.types';
@@ -137,6 +138,12 @@ export function Classroom({
   const panelOpenRef = useRef(false);
 
   const stageRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * The teacher's pointer on the slide, as the class last heard of it. Its
+   * own pub/sub rather than state: positions arrive many times a second and
+   * must not re-render the whole room each time.
+   */
+  const cursorFeed = useMemo(() => createCursorFeed(), []);
   const deckRef = useRef(deck);
 
   /**
@@ -243,9 +250,11 @@ export function Classroom({
         refreshDeck();
       }
       else if (message.t === 'sync') setSyncAsk((n) => n + 1);
+      else if (message.t === 'cursor') cursorFeed.set({ x: message.x, y: message.y });
+      else if (message.t === 'cursor-off') cursorFeed.set(null);
       else if (message.t === 'ended') window.location.assign('/dashboard');
     },
-    [ensureSlideUrl, refreshDeck, tab],
+    [cursorFeed, ensureSlideUrl, refreshDeck, tab],
   );
 
   // Opening the chat is reading it.
@@ -808,6 +817,20 @@ export function Classroom({
     // Undo and clear repaint the page from scratch; a new stroke is already on it.
     if (redraw) void showLive(pageId, slideRef.current);
   };
+  /**
+   * Where the teacher's pointer is on the slide, told to the class. Lossy
+   * while it moves — a dropped position is replaced by the next one forty
+   * milliseconds later — and reliable for the "gone", which has no next one.
+   */
+  const { send: sendMessage, sendLossy } = live;
+  const shareCursor = useCallback(
+    (position: CursorPosition | null) => {
+      if (position) sendLossy({ t: 'cursor', x: position.x, y: position.y });
+      else void sendMessage({ t: 'cursor-off' });
+    },
+    [sendLossy, sendMessage],
+  );
+
   const annotate: SlideAnnotate | undefined = hostLivePage
     ? (() => {
         const pageId = hostLivePage.id;
@@ -1303,6 +1326,8 @@ export function Classroom({
                 staged={staged}
                 onStage={stageStudent}
                 annotate={annotate}
+                cursorFeed={isHost ? undefined : cursorFeed}
+                onCursor={isHost ? shareCursor : undefined}
               />
             )}
           </div>
