@@ -135,7 +135,7 @@ export default async function CourseBuilderPage({
     ? await supabase
         .from('class_lesson_content')
         .select(
-          'class_id, lesson_id, content, video_id, video_provider, video_bytes, video_expires_at, attachments',
+          'class_id, lesson_id, content, video_id, video_provider, video_bytes, video_expires_at, video_uploaded_at, attachments',
         )
         .in('lesson_id', lessonIds)
     : { data: [] };
@@ -150,6 +150,7 @@ export default async function CourseBuilderPage({
       videoProvider: row.video_provider,
       videoBytes: row.video_bytes,
       videoExpiresAt: row.video_expires_at,
+      videoUploadedAt: row.video_uploaded_at,
       documents: readDocuments(row.attachments),
     });
     classContentByLesson.set(row.lesson_id, list);
