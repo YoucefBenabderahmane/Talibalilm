@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { getTranslations, setRequestLocale } from 'next-intl/server';
 import type { Metadata } from 'next';
 import { BookOpen, CalendarClock, GraduationCap, Layers, ShieldCheck, Wrench } from 'lucide-react';
@@ -53,7 +54,12 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
   const tProfile = await getTranslations('profile');
   const tCourses = await getTranslations('courses');
 
-  const [profile, entitlements, published, cursusList, approved, plans, paypal] =
+  // Courses this student has opened, most recent first. Enrolment is a
+  // bookmark rather than a gate, so an empty list is normal for a new member.
+  // Read together with everything else that needs only the viewer: it used
+  // to wait for all of them first, for no reason.
+  const supabase = await createClient();
+  const [profile, entitlements, published, cursusList, approved, plans, paypal, enrollments] =
     await Promise.all([
       getStudentProfile(),
       getEntitlements(),
@@ -62,6 +68,12 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
       isApproved(),
       listPaymentPlans(),
       getPayPalPublicConfig(),
+      supabase
+        .from('enrollments')
+        .select('course_id, last_accessed_at')
+        .order('last_accessed_at', { ascending: false })
+        .limit(6)
+        .then(({ data }) => data ?? []),
     ]);
 
   // One overdue installment closes the courses until it is settled. The
@@ -74,16 +86,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
   const remaining = daysRemaining(entitlements);
   const isStaff = viewer.role === 'instructor' || viewer.role === 'admin';
 
-  // Courses this student has opened, most recent first. Enrolment is a
-  // bookmark rather than a gate, so an empty list is normal for a new member.
-  const supabase = await createClient();
-  const { data: enrollments } = await supabase
-    .from('enrollments')
-    .select('course_id, last_accessed_at')
-    .order('last_accessed_at', { ascending: false })
-    .limit(6);
-
-  const openedIds = new Set((enrollments ?? []).map((e) => e.course_id));
+  const openedIds = new Set(enrollments.map((e) => e.course_id));
   const opened = published.filter((c) => openedIds.has(c.id));
   const suggestions = published.filter((c) => !openedIds.has(c.id)).slice(0, 3);
 
@@ -164,7 +167,11 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
             {/* Live classes first when there are any: a room that is open now
                 is the one thing on this page that is time-sensitive. */}
             <div className="empty:hidden">
-              <UpcomingClasses locale={locale} />
+              {/* Streamed in after the page has painted: two more reads that
+                  the rest of the dashboard need not wait for. */}
+              <Suspense fallback={null}>
+                <UpcomingClasses locale={locale} />
+              </Suspense>
             </div>
 
             <section>

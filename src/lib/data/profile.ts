@@ -1,6 +1,7 @@
 import 'server-only';
 import { createClient } from '@/lib/supabase/server';
 import { supabaseConfigured } from '@/lib/env';
+import { currentViewer } from '@/lib/auth/guards';
 import { signDownload } from '@/lib/storage/r2';
 
 /**
@@ -44,24 +45,24 @@ export async function avatarUrl(key: string | null): Promise<string | null> {
 export async function getStudentProfile(): Promise<StudentProfile | null> {
   if (!supabaseConfigured) return null;
 
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
+  // Who is asking comes from the request's one identity lookup, not from a
+  // second `getUser()` round trip of this function's own.
+  const viewer = await currentViewer();
+  if (!viewer) return null;
 
+  const supabase = await createClient();
   const { data } = await supabase
     .from('profiles')
     .select(
       'civility, first_name, last_name, phone, phone_landline, birth_date, address, postal_code, city, department, avatar_key',
     )
-    .eq('id', user.id)
+    .eq('id', viewer.id)
     .maybeSingle();
 
   if (!data) return null;
 
   return {
-    email: user.email ?? null,
+    email: viewer.email,
     civility: data.civility,
     firstName: data.first_name,
     lastName: data.last_name,
