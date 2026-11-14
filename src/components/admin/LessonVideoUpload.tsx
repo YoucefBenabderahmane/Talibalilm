@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useTranslations } from 'next-intl';
-import { Film, Trash2, Upload, X } from 'lucide-react';
+import { useLocale, useTranslations } from 'next-intl';
+import { Film, Play, Trash2, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ActionError } from '@/components/admin/ActionError';
 import {
@@ -20,6 +20,7 @@ import {
   removeLessonVideo,
   setVideoRetention,
   signLessonVideoParts,
+  signLessonVideoPlayback,
   startLessonVideoUpload,
 } from '@/app/actions/video';
 import type { AdminState } from '@/app/actions/admin';
@@ -107,6 +108,7 @@ export function LessonVideoUpload({
   provider,
   bytes,
   expiresAt,
+  uploadedAt,
 }: {
   lessonId: string;
   /** The group this recording belongs to. A lesson's video is per class. */
@@ -115,8 +117,11 @@ export function LessonVideoUpload({
   bytes: number;
   /** ISO date, or null for "keep indefinitely". */
   expiresAt: string | null;
+  /** ISO date the current file landed, or null when there is none. */
+  uploadedAt: string | null;
 }) {
   const t = useTranslations('admin');
+  const locale = useLocale();
   const inputRef = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<AdminState>(IDLE);
   const [percent, setPercent] = useState<number | null>(null);
@@ -126,9 +131,33 @@ export function LessonVideoUpload({
    * reads as "the upload vanished". This makes the size and the Remove button
    * appear the moment R2 accepted the file.
    */
-  const [uploaded, setUploaded] = useState<{ bytes: number } | null>(null);
+  const [uploaded, setUploaded] = useState<{ bytes: number; at: string } | null>(null);
   const hasVideo = (provider === 'r2' && bytes > 0) || uploaded !== null;
   const shownBytes = uploaded?.bytes ?? bytes;
+  const shownUploadedAt = uploaded?.at ?? (provider === 'r2' ? uploadedAt : null);
+
+  /**
+   * The signed link the teacher is watching, if any. Dropped whenever the file
+   * changes: a replaced or removed recording must not go on playing under the
+   * old link until it expires.
+   */
+  const [playback, setPlayback] = useState<string | null>(null);
+  const [opening, setOpening] = useState(false);
+  useEffect(() => {
+    setPlayback(null);
+  }, [uploaded]);
+
+  const watch = async () => {
+    setOpening(true);
+    const result = await signLessonVideoPlayback({ lessonId, classId });
+    setOpening(false);
+    if (result.ok && result.url) {
+      setPlayback(result.url);
+      setState(IDLE);
+    } else {
+      setState(result);
+    }
+  };
 
   /** Cancels the upload in progress. */
   const cancelRef = useRef<AbortController | null>(null);
@@ -274,7 +303,7 @@ export function LessonVideoUpload({
       // Joined (or refused for its content): either way there is nothing left
       // to resume. A missing part keeps the upload for the next try.
       if (result.ok || result.error !== 'uploadFailed') writePending(lessonId, classId, null);
-      if (result.ok) setUploaded({ bytes: file.size });
+      if (result.ok) setUploaded({ bytes: file.size, at: new Date().toISOString() });
       setState(result);
     },
     [lessonId, classId, t],
@@ -286,9 +315,38 @@ export function LessonVideoUpload({
         <Film className="size-4 text-ink-muted" aria-hidden="true" />
         <p className="text-[13px] font-medium text-ink">{t('videoUpload')}</p>
         {hasVideo && <span className="text-[12px] text-ink-muted">{formatBytes(shownBytes)}</span>}
+        {hasVideo && shownUploadedAt && (
+          <span className="text-[12px] text-ink-muted">
+            ·{' '}
+            {t('videoUploadedOn', {
+              date: new Intl.DateTimeFormat(locale, {
+                dateStyle: 'medium',
+                timeStyle: 'short',
+              }).format(new Date(shownUploadedAt)),
+            })}
+          </span>
+        )}
       </div>
 
       <p className="mt-1 text-[11px] leading-relaxed text-ink-muted">{t('videoUploadHint')}</p>
+
+      {/* The teacher's own check that the right recording is in place. The link
+          is minted on demand and lives an hour; closing the player forgets it. */}
+      {playback && (
+        <div className="mt-3 overflow-hidden rounded-[var(--radius-input)] border border-line bg-black">
+          <video src={playback} controls preload="metadata" className="block aspect-video w-full" />
+          <div className="flex justify-end bg-surface px-2 py-1">
+            <button
+              type="button"
+              onClick={() => setPlayback(null)}
+              className="inline-flex items-center gap-1 text-[11px] text-ink-muted hover:text-ink"
+            >
+              <X className="size-3" aria-hidden="true" />
+              {t('videoWatchClose')}
+            </button>
+          </div>
+        </div>
+      )}
 
       <input
         ref={inputRef}
@@ -346,6 +404,19 @@ export function LessonVideoUpload({
 
           {hasVideo && (
             <>
+              {!playback && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={opening}
+                  onClick={() => void watch()}
+                >
+                  <Play className="size-3.5" aria-hidden="true" />
+                  {t('videoWatch')}
+                </Button>
+              )}
+
               <Button
                 type="button"
                 size="sm"
