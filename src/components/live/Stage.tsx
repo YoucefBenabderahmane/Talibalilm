@@ -10,13 +10,25 @@ import {
   Maximize2,
   Minimize2,
   Presentation,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { Track, type Participant, type Room } from 'livekit-client';
 import { cn } from '@/lib/utils';
-import { clampPan, nextZoom } from '@/lib/live/zoom';
+import {
+  clampPan,
+  MAX_ZOOM,
+  MIN_ZOOM,
+  nextZoom,
+  normalizePoint,
+  steppedZoom,
+  zoomAbout,
+} from '@/lib/live/zoom';
+import type { CursorFeed, CursorPosition } from '@/lib/live/cursor-feed';
 import { SharePip } from './SharePip';
 import { SlidePen, type SlideAnnotate } from './SlidePen';
 import { StageCamera } from './StageCamera';
+import { slidePageRect, TeacherCursor } from './TeacherCursor';
 import { VideoTile } from './VideoTile';
 import type { RoomPerson } from './useRoom';
 
@@ -58,6 +70,8 @@ export function Stage({
   staged,
   onStage,
   annotate,
+  cursorFeed,
+  onCursor,
 }: {
   room: Room;
   people: RoomPerson[];
@@ -80,6 +94,10 @@ export function Stage({
   onStage: (identity: string | null) => void;
   /** The teacher's pen, when the slide on stage is one she can draw on. */
   annotate?: SlideAnnotate;
+  /** A student's stage: where the teacher's pointer is on the slide. */
+  cursorFeed?: CursorFeed;
+  /** The teacher's stage: tells the class where her pointer is. */
+  onCursor?: (position: CursorPosition | null) => void;
 }) {
   const t = useTranslations('live');
   const byIdentity = (identity: string): Participant | undefined =>
@@ -158,6 +176,8 @@ export function Stage({
             total={slideTotal}
             onGo={onGoSlide}
             annotate={annotate}
+            cursorFeed={cursorFeed}
+            onCursor={onCursor}
           />
         ) : slideIndex >= 0 ? (
           // The deck arrives without links and the page on stage is signed on
@@ -243,7 +263,14 @@ export function Stage({
  * Zoom is per viewer and changes nothing for anyone else — a student reading a
  * dense page can push in without moving the class. The wheel is registered by
  * hand rather than through React because the page's own scroll has to be
- * stopped, and a passive listener cannot do that.
+ * stopped, and a passive listener cannot do that. On a phone the same zoom is
+ * a pinch, a double-tap on the spot to look at, and the + / − buttons, because
+ * a student following from a phone had no wheel and `touch-none` had taken
+ * the browser's own pinch away.
+ *
+ * The teacher's pointer is shared: her stage sends where it is on the page,
+ * a student's stage draws it there (TeacherCursor). That is how the class
+ * follows the line she is reading from.
  *
  * The pager is the host's alone, exactly like Zoom's presenter toolbar: the
  * class follows the teacher's page through the same `slide` message the side
@@ -264,6 +291,8 @@ function SlideStage({
   total,
   onGo,
   annotate,
+  cursorFeed,
+  onCursor,
 }: {
   content: SlideContent;
   canPresent: boolean;
@@ -271,6 +300,8 @@ function SlideStage({
   total: number;
   onGo: (index: number) => void;
   annotate?: SlideAnnotate;
+  cursorFeed?: CursorFeed;
+  onCursor?: (position: CursorPosition | null) => void;
 }) {
   const t = useTranslations('live');
   const container = useRef<HTMLDivElement>(null);
@@ -281,7 +312,28 @@ function SlideStage({
    */
   const wrapper = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  /** Every pointer down on the surface, so two fingers read as a pinch. */
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  /** The pinch in progress: the fingers' last distance and midpoint. */
+  const pinch = useRef<{ distance: number; mid: { x: number; y: number } } | null>(null);
+  /** The last tap, to tell a double-tap from two taps. */
+  const lastTap = useRef<{ at: number; x: number; y: number } | null>(null);
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
+
+  /** A point measured from the container's centre, where the transform pivots. */
+  const centred = (rect: DOMRect, clientX: number, clientY: number) => ({
+    x: clientX - rect.left - rect.width / 2,
+    y: clientY - rect.top - rect.height / 2,
+  });
+
+  /** The + and − buttons zoom about the centre of what is on screen. */
+  const step = (direction: 1 | -1) => {
+    const rect = container.current?.getBoundingClientRect();
+    if (!rect) return;
+    setView((current) =>
+      zoomAbout(current, steppedZoom(current.scale, direction), { x: 0, y: 0 }, rect.width, rect.height),
+    );
+  };
   const [fullscreen, setFullscreen] = useState(false);
   const [canFullscreen, setCanFullscreen] = useState(false);
   /** What the page box holds while it is being typed in. */
@@ -344,27 +396,82 @@ function SlideStage({
       // teacher is trying to read a formula.
       event.preventDefault();
       const rect = element.getBoundingClientRect();
-      setView((current) => {
-        const scale = nextZoom(current.scale, event.deltaY);
-        if (scale === current.scale) return current;
-        // Keep the point under the pointer where it is: zooming about the
-        // centre means pushing in on a corner throws it off screen.
-        const factor = scale / current.scale;
-        const px = event.clientX - rect.left - rect.width / 2;
-        const py = event.clientY - rect.top - rect.height / 2;
-        const pan = clampPan(
-          { x: current.x * factor + px * (1 - factor), y: current.y * factor + py * (1 - factor) },
-          scale,
+      // Keep the point under the pointer where it is: zooming about the
+      // centre means pushing in on a corner throws it off screen.
+      setView((current) =>
+        zoomAbout(
+          current,
+          // ctrlKey on a wheel event is how a trackpad pinch arrives.
+          nextZoom(current.scale, event.deltaY, event.ctrlKey),
+          centred(rect, event.clientX, event.clientY),
           rect.width,
           rect.height,
-        );
-        return { scale, x: pan.x, y: pan.y };
-      });
+        ),
+      );
     };
 
     element.addEventListener('wheel', onWheel, { passive: false });
     return () => element.removeEventListener('wheel', onWheel);
   }, []);
+
+  // The teacher's pointer, shared with the class. Native listeners in the
+  // capture phase: the pen layer stops the propagation of its own pointer
+  // events, and the pointer has to be seen through it. Twenty-five times a
+  // second at most, as fractions of the page; off when it leaves the page.
+  useEffect(() => {
+    const element = container.current;
+    if (!element || !canPresent || !onCursor) return;
+    const EVERY = 40;
+    let last = 0;
+    let shown = false;
+    let latest: { x: number; y: number } | null = null;
+    let timer: number | null = null;
+
+    const tell = (position: { x: number; y: number } | null) => {
+      last = performance.now();
+      if (position) {
+        shown = true;
+        onCursor(position);
+      } else if (shown) {
+        shown = false;
+        onCursor(null);
+      }
+    };
+    // The last position is the one that matters — it is where she stopped,
+    // on the word she means — so a move inside the window is not dropped but
+    // held and sent when the window ends.
+    const onMove = (event: PointerEvent) => {
+      const page = slidePageRect(element);
+      latest = page ? normalizePoint(event.clientX, event.clientY, page) : null;
+      const wait = EVERY - (performance.now() - last);
+      if (wait <= 0) {
+        tell(latest);
+        return;
+      }
+      if (timer === null) {
+        timer = window.setTimeout(() => {
+          timer = null;
+          tell(latest);
+        }, wait);
+      }
+    };
+    const onLeave = () => {
+      latest = null;
+      if (timer !== null) {
+        window.clearTimeout(timer);
+        timer = null;
+      }
+      tell(null);
+    };
+    element.addEventListener('pointermove', onMove, true);
+    element.addEventListener('pointerleave', onLeave);
+    return () => {
+      element.removeEventListener('pointermove', onMove, true);
+      element.removeEventListener('pointerleave', onLeave);
+      if (timer !== null) window.clearTimeout(timer);
+      if (shown) onCursor(null);
+    };
+  }, [canPresent, onCursor]);
 
   // The host's keyboard, the way a presentation works everywhere else. Ignored
   // while the teacher is typing in the chat or renaming the room.
@@ -397,17 +504,63 @@ function SlideStage({
         className="relative min-h-0 flex-1 touch-none overflow-hidden"
         style={{ cursor: view.scale > 1 ? (drag.current ? 'grabbing' : 'grab') : 'default' }}
         onPointerDown={(event) => {
-          if (view.scale <= 1) return;
-          // The reset control lives inside the zoom surface; a drag started on
-          // it would capture the pointer and swallow the click.
+          // The controls live inside the zoom surface; a drag started on one
+          // would capture the pointer and swallow the click.
           if ((event.target as HTMLElement).closest('button, input')) return;
+          pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+          if (pointers.current.size === 2) {
+            // Two fingers: a pinch, never a drag.
+            drag.current = null;
+            const [a, b] = [...pointers.current.values()];
+            if (!a || !b) return;
+            pinch.current = {
+              distance: Math.hypot(a.x - b.x, a.y - b.y),
+              mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+            };
+            event.currentTarget.setPointerCapture(event.pointerId);
+            return;
+          }
+          if (view.scale <= 1) return;
           event.currentTarget.setPointerCapture(event.pointerId);
           drag.current = { x: event.clientX, y: event.clientY, panX: view.x, panY: view.y };
         }}
         onPointerMove={(event) => {
+          if (pointers.current.has(event.pointerId)) {
+            pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+          }
+          const rect = event.currentTarget.getBoundingClientRect();
+          const held = pinch.current;
+          const [a, b] = held ? [...pointers.current.values()] : [];
+          if (held && a && b) {
+            const distance = Math.hypot(a.x - b.x, a.y - b.y);
+            const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+            if (distance > 0 && held.distance > 0) {
+              // Zoom by how much the fingers spread, about where they are,
+              // then follow them: the page stays under the hand.
+              const ratio = distance / held.distance;
+              const shift = { x: mid.x - held.mid.x, y: mid.y - held.mid.y };
+              setView((current) => {
+                const zoomed = zoomAbout(
+                  current,
+                  current.scale * ratio,
+                  centred(rect, mid.x, mid.y),
+                  rect.width,
+                  rect.height,
+                );
+                const pan = clampPan(
+                  { x: zoomed.x + shift.x, y: zoomed.y + shift.y },
+                  zoomed.scale,
+                  rect.width,
+                  rect.height,
+                );
+                return { scale: zoomed.scale, x: pan.x, y: pan.y };
+              });
+            }
+            pinch.current = { distance, mid };
+            return;
+          }
           const start = drag.current;
           if (!start) return;
-          const rect = event.currentTarget.getBoundingClientRect();
           setView((current) => {
             const pan = clampPan(
               {
@@ -421,7 +574,37 @@ function SlideStage({
             return { ...current, x: pan.x, y: pan.y };
           });
         }}
-        onPointerUp={() => {
+        onPointerUp={(event) => {
+          const wasPinching = pinch.current !== null;
+          pointers.current.delete(event.pointerId);
+          if (pointers.current.size < 2) pinch.current = null;
+          drag.current = null;
+          // A double-tap zooms in on the spot, or back out to the fitted
+          // page — the gesture every phone has taught. Touch only: a mouse
+          // has the wheel, and a double-click on a slide should do nothing.
+          if (event.pointerType !== 'touch' || wasPinching || pointers.current.size > 0) return;
+          const now = Date.now();
+          const last = lastTap.current;
+          if (
+            last &&
+            now - last.at < 320 &&
+            Math.hypot(event.clientX - last.x, event.clientY - last.y) < 30
+          ) {
+            lastTap.current = null;
+            const rect = event.currentTarget.getBoundingClientRect();
+            const point = centred(rect, event.clientX, event.clientY);
+            setView((current) =>
+              current.scale > 1
+                ? { scale: 1, x: 0, y: 0 }
+                : zoomAbout(current, 2.5, point, rect.width, rect.height),
+            );
+          } else {
+            lastTap.current = { at: now, x: event.clientX, y: event.clientY };
+          }
+        }}
+        onPointerCancel={(event) => {
+          pointers.current.delete(event.pointerId);
+          if (pointers.current.size < 2) pinch.current = null;
           drag.current = null;
         }}
       >
@@ -448,39 +631,66 @@ function SlideStage({
         {/* The pen draws on the page the class is watching: live pages only. */}
         {canPresent && annotate && content.kind === 'live' && <SlidePen {...annotate} />}
 
-        {(canPresent || view.scale > 1) && (
-          <div className="absolute end-3 top-3 flex flex-col items-end gap-2">
-            {canPresent && canFullscreen && (
-              <button
-                type="button"
-                onClick={toggleFullscreen}
-                title={fullscreen ? t('slideExitFullscreen') : t('slideFullscreen')}
-                aria-pressed={fullscreen}
-                className="rounded-full bg-black/60 p-2 text-white/80 transition-colors hover:text-white"
-              >
-                {fullscreen ? (
-                  <Minimize2 className="size-4" aria-hidden="true" />
-                ) : (
-                  <Maximize2 className="size-4" aria-hidden="true" />
-                )}
-                <span className="sr-only">
-                  {fullscreen ? t('slideExitFullscreen') : t('slideFullscreen')}
-                </span>
-              </button>
-            )}
-
-            {view.scale > 1 && (
-              <button
-                type="button"
-                onClick={() => setView({ scale: 1, x: 0, y: 0 })}
-                title={t('slideZoomReset')}
-                className="rounded-full bg-black/60 px-3 py-1 text-[11px] text-white/80 transition-colors hover:text-white"
-              >
-                {t('slideZoomReset')} · {Math.round(view.scale * 100)}%
-              </button>
-            )}
-          </div>
+        {/* The teacher's pointer, on a student's copy of the page. */}
+        {!canPresent && cursorFeed && (
+          <TeacherCursor feed={cursorFeed} container={container} view={view} />
         )}
+
+        <div className="absolute end-3 top-3 flex flex-col items-end gap-2">
+          {canFullscreen && (
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              title={fullscreen ? t('slideExitFullscreen') : t('slideFullscreen')}
+              aria-pressed={fullscreen}
+              className="rounded-full bg-black/60 p-2 text-white/80 transition-colors hover:text-white"
+            >
+              {fullscreen ? (
+                <Minimize2 className="size-4" aria-hidden="true" />
+              ) : (
+                <Maximize2 className="size-4" aria-hidden="true" />
+              )}
+              <span className="sr-only">
+                {fullscreen ? t('slideExitFullscreen') : t('slideFullscreen')}
+              </span>
+            </button>
+          )}
+
+          {/* + and −, for the hands without a wheel. */}
+          <div className="flex flex-col overflow-hidden rounded-full bg-black/60">
+            <button
+              type="button"
+              onClick={() => step(1)}
+              disabled={view.scale >= MAX_ZOOM}
+              title={t('slideZoomIn')}
+              className="p-2 text-white/80 transition-colors hover:text-white disabled:opacity-30"
+            >
+              <ZoomIn className="size-4" aria-hidden="true" />
+              <span className="sr-only">{t('slideZoomIn')}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => step(-1)}
+              disabled={view.scale <= MIN_ZOOM}
+              title={t('slideZoomOut')}
+              className="p-2 text-white/80 transition-colors hover:text-white disabled:opacity-30"
+            >
+              <ZoomOut className="size-4" aria-hidden="true" />
+              <span className="sr-only">{t('slideZoomOut')}</span>
+            </button>
+          </div>
+
+          {view.scale > 1 && (
+            <button
+              type="button"
+              onClick={() => setView({ scale: 1, x: 0, y: 0 })}
+              title={t('slideZoomReset')}
+              className="rounded-full bg-black/60 px-3 py-1 text-[11px] text-white/80 transition-colors hover:text-white"
+            >
+              {t('slideZoomReset')} · {Math.round(view.scale * 100)}%
+            </button>
+          )}
+        </div>
       </div>
 
       {canPresent && total > 1 && (
