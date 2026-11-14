@@ -17,6 +17,10 @@ begin
   if not ok then raise exception 'FAILED: %', what; end if;
   raise notice '  ok  %', what;
 end $$;
+-- Callable from the roles the tests switch to: since the function-grants
+-- migration a new function starts closed, as it does on Supabase once that
+-- migration has run.
+grant execute on function public.assert(boolean, text) to anon, authenticated, service_role;
 
 insert into auth.users (id, email, raw_user_meta_data, created_at, email_confirmed_at) values
   ('b0000000-0000-4000-8000-000000000001', 'spam-old@test.fr', '{}'::jsonb,

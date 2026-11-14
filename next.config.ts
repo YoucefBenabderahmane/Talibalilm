@@ -6,6 +6,22 @@ import type { NextConfig } from 'next';
 const withNextIntl = createNextIntlPlugin('./src/i18n/request.ts');
 
 /**
+ * The one Supabase host whose public files the image optimizer will fetch.
+ *
+ * `*.supabase.co` let any project's public bucket be pushed through this
+ * site's optimizer at this site's expense. The host is known at build time
+ * from the project URL; without it (a bare checkout) the wildcard stays so a
+ * build never fails on it.
+ */
+const supabaseHost = (() => {
+  try {
+    return new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').hostname || '*.supabase.co';
+  } catch {
+    return '*.supabase.co';
+  }
+})();
+
+/**
  * Resolve the school's artwork HERE, at build time, and inline the answer.
  *
  * It used to be resolved by probing the filesystem at request time. That works
@@ -78,7 +94,7 @@ const nextConfig: NextConfig = {
   // remote yet. Each new host has to be added deliberately.
   images: {
     remotePatterns: [
-      { protocol: 'https', hostname: '*.supabase.co', pathname: '/storage/v1/object/public/**' },
+      { protocol: 'https', hostname: supabaseHost, pathname: '/storage/v1/object/public/**' },
     ],
     // Four widths, not Next's eight. Every width is a variant the optimizer
     // has to generate, and the site's largest use is a 900px carousel image —
@@ -135,6 +151,16 @@ const nextConfig: NextConfig = {
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
           { key: 'X-Frame-Options', value: 'DENY' },
+          {
+            // The three directives that cannot break a script: no `<base>`
+            // hijack, no plugins, and nobody framing the site (the modern
+            // form of X-Frame-Options above). Script and style sources are
+            // deliberately not named — PayPal's SDK, LiveKit and Next's own
+            // inline bootstrap would each need an allowance, and a wrong one
+            // takes the payment page down without a test to catch it.
+            key: 'Content-Security-Policy',
+            value: "base-uri 'self'; object-src 'none'; frame-ancestors 'none'",
+          },
           {
             key: 'Permissions-Policy',
             value: [

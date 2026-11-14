@@ -1,5 +1,6 @@
 import { getTranslations, setRequestLocale } from 'next-intl/server';
 import { GraduationCap } from 'lucide-react';
+import { jsonLdScript } from '@/lib/seo/json-ld';
 import { Link } from '@/i18n/navigation';
 import { Button } from '@/components/ui/button';
 import { CourseCard } from '@/components/marketing/CourseCard';
@@ -68,7 +69,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(orgJsonLd) }}
+        dangerouslySetInnerHTML={{ __html: jsonLdScript(orgJsonLd) }}
       />
 
       {/* Hero. Centred, with the Arabic name under the French one and a single

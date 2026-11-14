@@ -1,5 +1,6 @@
 import { getTranslations, setRequestLocale } from 'next-intl/server';
 import { notFound } from 'next/navigation';
+import { jsonLdScript } from '@/lib/seo/json-ld';
 import type { Metadata } from 'next';
 import { BookOpen, Check, Clock, Lock, PlayCircle, Users } from 'lucide-react';
 import { Link } from '@/i18n/navigation';
@@ -234,10 +235,9 @@ export default async function CoursePage({
 
   return (
     <>
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-      />
+      {/* Escaped for a script tag: the instructor's own name is in here, and
+          `JSON.stringify` alone would let `</script>` out of the data block. */}
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(jsonLd) }} />
 
       {/* The title band. Dark, with the Arabic name under the French one —
           the school's own page opens on exactly this. */}

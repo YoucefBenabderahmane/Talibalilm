@@ -158,7 +158,7 @@ export async function attachProviderOrder(orderId: string, providerOrderId: stri
 
 export type SettleResult =
   | { ok: true; alreadyPaid: boolean; orderId: string }
-  | { ok: false; reason: 'not_found' | 'amount_mismatch' | 'not_completed' };
+  | { ok: false; reason: 'not_found' | 'amount_mismatch' | 'not_completed' | 'not_pending' };
 
 /**
  * Mark an order paid and hand over what it bought.
@@ -232,7 +232,7 @@ export async function settleOrder(options: {
     return { ok: false, reason: 'amount_mismatch' };
   }
 
-  const { error } = await supabase
+  const { data: claimed, error } = await supabase
     .from('orders')
     .update({
       status: 'paid',
@@ -242,11 +242,36 @@ export async function settleOrder(options: {
       payment_method: paymentMethod ?? null,
     })
     .eq('id', orderId)
-    // Only a pending order becomes paid. If a concurrent settle got there
-    // first, this matches nothing and the grant below is its no-op.
-    .eq('status', 'pending');
+    // Only a pending order becomes paid.
+    .eq('status', 'pending')
+    .select('id')
+    .maybeSingle();
 
   if (error) throw new Error(`Could not mark the order paid: ${error.message}`);
+
+  if (!claimed) {
+    // Nothing was pending to claim. The ordinary reason is the race this
+    // function is built for: the webhook and the return page settle the same
+    // capture, and the other one won a moment ago — then the order is paid,
+    // the grant has happened, and this caller reports the same success. The
+    // other reason is the one that used to go unnoticed: a capture that
+    // landed on an order the sweep had cancelled or an earlier try had
+    // failed. The money has moved and nobody has been granted anything, so
+    // that is paged rather than papered over with a receipt.
+    const { data: now } = await supabase
+      .from('orders')
+      .select('status')
+      .eq('id', orderId)
+      .maybeSingle();
+    if (now?.status === 'paid') return { ok: true, alreadyPaid: true, orderId };
+
+    reportError('paypal.settle.notPending', new Error('capture landed on a non-pending order'), {
+      orderId,
+      captureId,
+      status: now?.status ?? order.status,
+    });
+    return { ok: false, reason: 'not_pending' };
+  }
 
   await supabase.rpc('grant_order_entitlements', { oid: orderId });
   // The receipt is best-effort and idempotent; a failure here has already been

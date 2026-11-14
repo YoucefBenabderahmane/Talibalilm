@@ -75,6 +75,10 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: latest
+          # Resolving "latest" is a GitHub API call. Unauthenticated, it shares
+          # the runner's rate limit with every other job on that address and
+          # fails the whole e2e job in ten seconds before a test has run.
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - run: npm ci
       - name: Start Supabase and apply migrations + seeds
         run: |
