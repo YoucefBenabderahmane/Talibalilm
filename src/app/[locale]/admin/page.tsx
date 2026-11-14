@@ -51,33 +51,35 @@ export default async function AdminOverviewPage({
     return n ?? 0;
   };
 
-  const [courses, products, packs, cursus, students] = await Promise.all([
-    count('courses'),
-    count('products'),
-    count('packs'),
-    count('cursus'),
-    count('profiles'),
-  ]);
+  // Nine independent reads, in flight together rather than five then four
+  // more one at a time. Among them: what the uploaded videos weigh, beside
+  // the free tier so the number means something (R2 bills by the
+  // gigabyte-month past 10 GB — small, but the school should watch it arrive
+  // rather than find it on a statement), and real payment readiness without
+  // ever reading the secret back (the status RPC reports only whether one is
+  // set, and an env-var override counts too).
+  const [courses, products, packs, cursus, students, publishedCourses, videoBytes, livePrices, payStatus] =
+    await Promise.all([
+      count('courses'),
+      count('products'),
+      count('packs'),
+      count('cursus'),
+      count('profiles'),
+      supabase
+        .from('courses')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'published')
+        .then((r) => r.count),
+      supabase.rpc('lesson_video_total_bytes').then((r) => r.data),
+      supabase
+        .from('products')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'published')
+        .then((r) => r.count),
+      supabase.rpc('payment_settings_status').then((r) => r.data),
+    ]);
 
-  const { count: publishedCourses } = await supabase
-    .from('courses')
-    .select('*', { count: 'exact', head: true })
-    .eq('status', 'published');
-
-  // What the uploaded videos weigh, beside the free tier so the number means
-  // something. R2 bills by the gigabyte-month past 10 GB — small, but the
-  // school should watch it arrive rather than find it on a statement.
-  const { data: videoBytes } = await supabase.rpc('lesson_video_total_bytes');
-
-  const { count: livePrices } = await supabase
-    .from('products')
-    .select('*', { count: 'exact', head: true })
-    .eq('status', 'published');
-
-  // Real payment readiness, without ever reading the secret back: the status
-  // RPC reports only whether one is set, and an env-var override counts too.
   const payEnvOverride = Boolean(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET);
-  const { data: payStatus } = await supabase.rpc('payment_settings_status');
   const ps = payStatus as unknown as { enabled?: boolean; has_secret?: boolean } | null;
   const paymentsReady = payEnvOverride || Boolean(ps?.enabled && ps?.has_secret);
 

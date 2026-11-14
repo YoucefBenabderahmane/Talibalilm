@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { redirect } from '@/i18n/navigation';
 import { getLocale } from 'next-intl/server';
 import { createClient } from '@/lib/supabase/server';
@@ -27,8 +28,14 @@ export interface Viewer {
  * `getUser()` rather than `getSession()`: the latter trusts the cookie as-is,
  * while this revalidates the JWT against the auth server. Anywhere a decision
  * hangs on identity, that difference is the whole guarantee.
+ *
+ * Once per request, through React's `cache()`. A page, its layout, the data
+ * helpers under it and the student profile all ask who is signed in, and each
+ * used to pay the auth round trip and the profile read again — three to four
+ * times on a dashboard click. The first caller's answer now serves the rest
+ * of that render; the next request asks afresh.
  */
-export async function currentViewer(): Promise<Viewer | null> {
+export const currentViewer = cache(async (): Promise<Viewer | null> => {
   if (!supabaseConfigured) return null;
 
   const supabase = await createClient();
@@ -57,7 +64,7 @@ export async function currentViewer(): Promise<Viewer | null> {
     role: profile?.role ?? 'student',
     profileMissing: !profile,
   };
-}
+});
 
 export async function requireViewer(): Promise<Viewer> {
   const viewer = await currentViewer();
