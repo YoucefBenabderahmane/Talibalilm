@@ -1,4 +1,11 @@
-import { expect, test, type Browser, type Page } from '@playwright/test';
+import {
+  expect,
+  test,
+  type Browser,
+  type Locator,
+  type Page,
+  type Response,
+} from '@playwright/test';
 
 /**
  * Attendance, as the two people it concerns see it.
@@ -133,8 +140,29 @@ test.describe('attendance at a live class', () => {
     }
   });
 
-  async function signIn(browser: Browser, who: { email: string; password: string }): Promise<Page> {
-    const context = await browser.newContext();
+  /**
+   * Each signed-in browser is its own client, on its own address.
+   *
+   * The login form allows ten attempts per address in fifteen minutes. Both
+   * browsers of this test, on both projects, on every retry, used to share the
+   * project's one address with every other spec that signs in — so a retry here
+   * could use up the bucket and the next spec was refused at the login form,
+   * failing for a reason that had nothing to do with it.
+   */
+  function clientAddress(role: 1 | 2): string {
+    const info = test.info();
+    const project = info.project.name === 'mobile' ? 2 : 1;
+    return `10.${20 + info.retry}.${project}.${role}`;
+  }
+
+  async function signIn(
+    browser: Browser,
+    who: { email: string; password: string },
+    role: 1 | 2,
+  ): Promise<Page> {
+    const context = await browser.newContext({
+      extraHTTPHeaders: { 'x-forwarded-for': clientAddress(role) },
+    });
     const page = await context.newPage();
     await page.goto('/login');
     await page.locator('input[name="email"]').fill(who.email);
@@ -144,11 +172,54 @@ test.describe('attendance at a live class', () => {
     return page;
   }
 
+  /**
+   * Press one of the correction buttons and wait for the row to say so.
+   *
+   * The click is followed by the server action's request, and the row is only
+   * read once that request has answered: what is asserted is the page the
+   * server sent back, not a guess about how long it takes. If the row still
+   * disagrees, the failure says what the request answered and what the row —
+   * including any error printed under the buttons — actually reads.
+   */
+  async function correct(page: Page, row: Locator, label: string, expected: string) {
+    const started = Date.now();
+    const answered = page
+      .waitForResponse(
+        (response) =>
+          response.request().method() === 'POST' &&
+          new URL(response.url()).pathname.includes('/admin/live/'),
+        { timeout: 20_000 },
+      )
+      .catch(() => null);
+    await row.getByRole('button', { name: label }).click();
+    const response: Response | null = await answered;
+    try {
+      await expect(row).toHaveAttribute('data-status', expected, { timeout: 10_000 });
+    } catch (error) {
+      const request = response?.request();
+      throw new Error(
+        [
+          `after « ${label} » the row did not read "${expected}".`,
+          `request: ${request ? `${request.method()} ${new URL(request.url()).pathname} next-action=${request.headers()['next-action'] ? 'yes' : 'no'}` : 'none seen'}`,
+          `response: ${response ? response.status() : 'none'} after ${Date.now() - started} ms`,
+          `row reads: ${(await row.innerText().catch(() => '(row gone)')).replace(/\s+/g, ' ')}`,
+          String(error),
+        ].join('\n'),
+      );
+    }
+  }
+
   test('an absence is shown to the student, and the teacher can correct it', async ({
     browser,
   }) => {
-    const asStudent = await signIn(browser, student);
-    const asTeacher = await signIn(browser, teacher);
+    // Two signed-in browsers and a dozen server round trips: more than the
+    // default thirty seconds on a loaded runner, and a timeout here would hide
+    // the diagnostics `correct` prints.
+    test.setTimeout(90_000);
+    const asStudent = await signIn(browser, student, 1);
+    const asTeacher = await signIn(browser, teacher, 2);
+    const pageErrors: string[] = [];
+    asTeacher.on('pageerror', (error) => pageErrors.push(error.message));
 
     // The student did not open the room: absent, and counted.
     const past = asStudent.getByTestId('past-classes');
@@ -166,8 +237,7 @@ test.describe('attendance at a live class', () => {
     await expect(roll.getByTestId('roll-totals')).toContainText('1 absent');
 
     // Excused by the teacher, under their own name, through the policy.
-    await row.getByRole('button', { name: 'Excusé' }).click();
-    await expect(row).toHaveAttribute('data-status', 'excused');
+    await correct(asTeacher, row, 'Excusé', 'excused');
     await expect(row.getByText('corrigé')).toBeVisible();
     await expect(row.getByRole('button', { name: 'Excusé' })).toHaveAttribute(
       'aria-pressed',
@@ -182,18 +252,18 @@ test.describe('attendance at a live class', () => {
     );
 
     // An on-site student: the teacher says they were there.
-    await row.getByRole('button', { name: 'Présent' }).click();
-    await expect(row).toHaveAttribute('data-status', 'present');
+    await correct(asTeacher, row, 'Présent', 'present');
     await asStudent.reload();
     await expect(mine).toHaveAttribute('data-status', 'present');
     await expect(past.getByTestId('attendance-summary')).toHaveText('Présence : 1 sur 1 séance');
 
     // "Automatique" removes the correction: back to what the room recorded.
-    await row.getByRole('button', { name: 'Automatique' }).click();
-    await expect(row).toHaveAttribute('data-status', 'absent');
+    await correct(asTeacher, row, 'Automatique', 'absent');
     await expect(row.getByText('corrigé')).toHaveCount(0);
     await asStudent.reload();
     await expect(mine).toHaveAttribute('data-status', 'absent');
+
+    expect(pageErrors, 'the class page threw no error').toEqual([]);
 
     await asStudent.context().close();
     await asTeacher.context().close();

@@ -24,6 +24,11 @@ test.describe('the learning path', () => {
     'needs the CI stack: a live Supabase plus the service role',
   );
 
+  // Its own client address: the login form allows ten attempts per address in
+  // fifteen minutes, and the project's shared address is used by every spec
+  // that signs in. A retry elsewhere must not be what refuses this one.
+  test.use({ extraHTTPHeaders: { 'x-forwarded-for': '10.30.0.1' } });
+
   const email = `e2e-path-${Date.now()}-${Math.random().toString(36).slice(2, 6)}@test.fr`;
   const password = 'E2ePath!2345';
   const groupName = `Classe parcours ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
