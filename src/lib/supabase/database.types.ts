@@ -1333,6 +1333,11 @@ export interface Database {
         Args: { lid: string; uid?: string };
         Returns: boolean;
       };
+      /** Published courses the caller may open: has_course_access, asked once. */
+      my_course_ids: {
+        Args: Record<string, never>;
+        Returns: string[];
+      };
       has_any_entitlement: {
         Args: { uid?: string };
         Returns: boolean;
