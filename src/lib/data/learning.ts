@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { supabaseConfigured } from '@/lib/env';
 import { readDocuments, type LessonDocument } from '@/lib/content/lesson-files';
+import { reportError } from '@/lib/observability/report';
 import type { EntitlementRow, LessonContentRow, ProgressRow } from '@/lib/supabase/database.types';
 
 /**
@@ -157,22 +158,33 @@ export async function getCourseProgress(lessonIds: string[]): Promise<Map<string
 }
 
 /**
- * Record that the student opened this course.
+ * Record that the student opened this course — prepared now, written later.
  *
  * Enrolment is a bookmark, not a gate: what decides access is the entitlement,
  * so this is created on first access rather than by an explicit act, and a
  * failure here must never block the lesson from rendering.
+ *
+ * The lesson page runs the write in `after()`, once the response has gone out.
+ * The client has to be built HERE, during the request: building it reads the
+ * session cookies, and Next refuses `cookies()` inside `after()`. It did so on
+ * every lesson view from #96 until this split, and because a failure in
+ * `after()` reaches only the server log, no visit was recorded and nobody saw.
+ * The returned function only uses the client it was given.
  */
-export async function touchEnrollment(courseId: string, userId: string): Promise<void> {
-  if (!supabaseConfigured) return;
+export async function prepareEnrollmentTouch(
+  courseId: string,
+  userId: string,
+): Promise<() => Promise<void>> {
+  if (!supabaseConfigured) return async () => {};
 
   const supabase = await createClient();
-  const { error } = await supabase
-    .from('enrollments')
-    .upsert(
-      { user_id: userId, course_id: courseId, last_accessed_at: new Date().toISOString() },
-      { onConflict: 'user_id,course_id' },
-    );
-
-  if (error) console.error('[enrollments] touch failed:', error.message);
+  return async () => {
+    const { error } = await supabase
+      .from('enrollments')
+      .upsert(
+        { user_id: userId, course_id: courseId, last_accessed_at: new Date().toISOString() },
+        { onConflict: 'user_id,course_id' },
+      );
+    if (error) reportError('enrollments.touch', error, { courseId });
+  };
 }
