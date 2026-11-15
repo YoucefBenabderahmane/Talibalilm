@@ -29,6 +29,8 @@ export type PaymentRoute = 'paypal' | 'office' | 'free';
 export type PackPricing = 'sum' | 'fixed' | 'percent';
 export type PaypalEnvironment = 'sandbox' | 'live';
 export type LiveStatus = 'scheduled' | 'live' | 'ended' | 'cancelled';
+/** A teacher's correction of one student's attendance at one live class. */
+export type AttendanceStatus = 'present' | 'absent' | 'excused';
 export type LiveRole = 'host' | 'participant';
 export type JoinState = 'pending' | 'approved' | 'rejected';
 
@@ -1119,6 +1121,25 @@ export interface Database {
         Update: never;
         Relationships: [];
       };
+      /** Corrections only: absent a row, attendance is whether live_participants has one. */
+      live_attendance_marks: {
+        Row: {
+          session_id: string;
+          user_id: string;
+          status: AttendanceStatus;
+          marked_by: string | null;
+          marked_at: string;
+        };
+        Insert: {
+          session_id: string;
+          user_id: string;
+          status: AttendanceStatus;
+          marked_by: string;
+          marked_at?: string;
+        };
+        Update: { status?: AttendanceStatus; marked_by?: string; marked_at?: string };
+        Relationships: [];
+      };
       live_slides: {
         Row: {
           id: string;
@@ -1551,6 +1572,7 @@ export interface Database {
       pack_pricing: PackPricing;
       paypal_environment: PaypalEnvironment;
       live_status: LiveStatus;
+      attendance_status: AttendanceStatus;
       live_role: LiveRole;
       join_state: JoinState;
     };

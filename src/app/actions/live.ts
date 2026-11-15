@@ -443,3 +443,72 @@ export async function endLiveSessionById(sessionId: string): Promise<AdminState>
   // load right after, which reads the list fresh anyway.
   return OK;
 }
+
+const markSchema = z.object({
+  sessionId: z.string().uuid(),
+  userId: z.string().uuid(),
+  // `auto` removes the correction: the class goes back to the automatic answer.
+  status: z.enum(['present', 'absent', 'excused', 'auto']),
+});
+
+/**
+ * Correct one student's attendance at one class.
+ *
+ * The room records who opened it online. A student who followed the class on
+ * site never appears there, and one whose connection failed did attend as far
+ * as the school is concerned — so the teacher's word has to be able to stand
+ * against the record, or the site tells those students they were absent and
+ * nobody can put it right.
+ *
+ * Through the ordinary client: the policies on `live_attendance_marks` are
+ * what let staff write and refuse everyone else, and they require the
+ * correction to be signed by the caller. Choosing "automatique" deletes the
+ * row rather than storing a fourth state, so there is never a correction that
+ * says nothing.
+ */
+export async function setAttendanceMark(
+  _prev: AdminState,
+  formData: FormData,
+): Promise<AdminState> {
+  const parsed = markSchema.safeParse({
+    sessionId: formData.get('sessionId'),
+    userId: formData.get('userId'),
+    status: formData.get('status'),
+  });
+  if (!parsed.success) return { ok: false, error: 'invalid' };
+  const { sessionId, userId, status } = parsed.data;
+
+  if (!supabaseConfigured) return { ok: false, error: 'unavailable' };
+  const viewer = await requireStaff();
+  const supabase = await createClient();
+
+  const { error } =
+    status === 'auto'
+      ? await supabase
+          .from('live_attendance_marks')
+          .delete()
+          .eq('session_id', sessionId)
+          .eq('user_id', userId)
+      : await supabase.from('live_attendance_marks').upsert(
+          {
+            session_id: sessionId,
+            user_id: userId,
+            status,
+            marked_by: viewer.id,
+            marked_at: new Date().toISOString(),
+          },
+          { onConflict: 'session_id,user_id' },
+        );
+
+  if (error) {
+    reportError('live.attendanceMark', error, { sessionId, userId, status });
+    return {
+      ok: false,
+      error: error.code === '42501' ? 'notAdmin' : 'saveFailed',
+      detail: errorDetail(error),
+    };
+  }
+
+  revalidatePath('/[locale]/admin/live/[id]', 'page');
+  return OK;
+}

@@ -11,6 +11,7 @@ import { InstallmentPayment } from '@/components/profile/InstallmentPayment';
 import { NotificationsToggle } from '@/components/notifications/NotificationsToggle';
 import { CheckoutProfileForm } from '@/components/checkout/CheckoutProfileForm';
 import { UpcomingClasses } from '@/components/live/UpcomingClasses';
+import { PastClasses } from '@/components/live/PastClasses';
 import { requireViewer } from '@/lib/auth/guards';
 import {
   daysRemaining,
@@ -206,6 +207,18 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
                 <UpcomingClasses locale={locale} />
               </Suspense>
             </div>
+
+            {/* What the group's classes left behind: each one held, and whether
+                this student was there. Streamed like the list above it, and
+                not for staff — a teacher is not a member of the classes they
+                teach. Renders nothing when no class counts yet. */}
+            {!isStaff && (
+              <div className="empty:hidden">
+                <Suspense fallback={null}>
+                  <PastClasses locale={locale} userId={viewer.id} limit={5} />
+                </Suspense>
+              </div>
+            )}
 
             <section>
               <h2 className="flex items-center gap-2 font-display text-xl font-semibold text-ink">

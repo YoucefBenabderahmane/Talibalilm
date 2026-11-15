@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Syllabus } from '@/components/learn/Syllabus';
 import { UpcomingClasses } from '@/components/live/UpcomingClasses';
+import { PastClasses } from '@/components/live/PastClasses';
 import { getCourse } from '@/lib/data/courses';
 import { listClassesForStudent } from '@/lib/data/classes';
 import { getCourseProgress, hasCourseAccess, listGroupLessonIds } from '@/lib/data/learning';
@@ -246,6 +247,16 @@ export default async function CourseHomePage({
                 <UpcomingClasses locale={locale} courseId={course.id} limit={3} />
               </Suspense>
             </div>
+
+            {/* Every class this module's group has held, with the student's
+                attendance at each. The dashboard shows the last few. */}
+            {!staff && (
+              <div className="empty:hidden">
+                <Suspense fallback={null}>
+                  <PastClasses locale={locale} userId={viewer.id} courseId={course.id} limit={50} />
+                </Suspense>
+              </div>
+            )}
           </aside>
         </div>
       </section>
