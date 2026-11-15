@@ -1,6 +1,7 @@
 import {
   expect,
   test,
+  type APIRequestContext,
   type Browser,
   type Locator,
   type Page,
@@ -181,7 +182,13 @@ test.describe('attendance at a live class', () => {
    * disagrees, the failure says what the request answered and what the row —
    * including any error printed under the buttons — actually reads.
    */
-  async function correct(page: Page, row: Locator, label: string, expected: string) {
+  async function correct(
+    page: Page,
+    row: Locator,
+    label: string,
+    expected: string,
+    request: APIRequestContext,
+  ) {
     const started = Date.now();
     const answered = page
       .waitForResponse(
@@ -196,13 +203,35 @@ test.describe('attendance at a live class', () => {
     try {
       await expect(row).toHaveAttribute('data-status', expected, { timeout: 10_000 });
     } catch (error) {
-      const request = response?.request();
+      const sent = response?.request();
+      // What the database holds for this class, read as the service role:
+      // separates "the correction was never written" from "it was written and
+      // the page did not show it".
+      const stored = await request
+        .get(
+          `${SUPABASE_URL}/rest/v1/live_attendance_marks?select=user_id,status,marked_by&session_id=eq.${sessionId}`,
+          { headers: serviceHeaders },
+        )
+        .then((r) => r.text())
+        .catch((e: unknown) => `(read failed: ${String(e)})`);
+      const body = response
+        ? await Promise.race([
+            response.text().then((t) => t.slice(0, 600).replace(/\s+/g, ' ')),
+            new Promise<string>((done) => setTimeout(() => done('(body still streaming)'), 3_000)),
+          ]).catch((e: unknown) => `(body unreadable: ${String(e)})`)
+        : '(no response)';
       throw new Error(
         [
           `after « ${label} » the row did not read "${expected}".`,
-          `request: ${request ? `${request.method()} ${new URL(request.url()).pathname} next-action=${request.headers()['next-action'] ? 'yes' : 'no'}` : 'none seen'}`,
+          `request: ${sent ? `${sent.method()} ${new URL(sent.url()).pathname} next-action=${sent.headers()['next-action'] ? 'yes' : 'no'}` : 'none seen'}`,
           `response: ${response ? response.status() : 'none'} after ${Date.now() - started} ms`,
+          `buttons disabled (action still pending): ${await row
+            .getByRole('button', { name: label })
+            .isDisabled()
+            .catch(() => 'unknown')}`,
           `row reads: ${(await row.innerText().catch(() => '(row gone)')).replace(/\s+/g, ' ')}`,
+          `database holds: ${stored}`,
+          `response body starts: ${body}`,
           String(error),
         ].join('\n'),
       );
@@ -211,6 +240,7 @@ test.describe('attendance at a live class', () => {
 
   test('an absence is shown to the student, and the teacher can correct it', async ({
     browser,
+    request,
   }) => {
     // Two signed-in browsers and a dozen server round trips: more than the
     // default thirty seconds on a loaded runner, and a timeout here would hide
@@ -237,7 +267,7 @@ test.describe('attendance at a live class', () => {
     await expect(roll.getByTestId('roll-totals')).toContainText('1 absent');
 
     // Excused by the teacher, under their own name, through the policy.
-    await correct(asTeacher, row, 'Excusé', 'excused');
+    await correct(asTeacher, row, 'Excusé', 'excused', request);
     await expect(row.getByText('corrigé')).toBeVisible();
     await expect(row.getByRole('button', { name: 'Excusé' })).toHaveAttribute(
       'aria-pressed',
@@ -252,13 +282,13 @@ test.describe('attendance at a live class', () => {
     );
 
     // An on-site student: the teacher says they were there.
-    await correct(asTeacher, row, 'Présent', 'present');
+    await correct(asTeacher, row, 'Présent', 'present', request);
     await asStudent.reload();
     await expect(mine).toHaveAttribute('data-status', 'present');
     await expect(past.getByTestId('attendance-summary')).toHaveText('Présence : 1 sur 1 séance');
 
     // "Automatique" removes the correction: back to what the room recorded.
-    await correct(asTeacher, row, 'Automatique', 'absent');
+    await correct(asTeacher, row, 'Automatique', 'absent', request);
     await expect(row.getByText('corrigé')).toHaveCount(0);
     await asStudent.reload();
     await expect(mine).toHaveAttribute('data-status', 'absent');
