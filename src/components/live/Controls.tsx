@@ -47,7 +47,8 @@ interface Item {
   /** What fits under the icon on a phone, where every button gets a fifth. */
   shortLabel?: string;
   icon: ReactNode;
-  onClick: () => void;
+  /** Receives the click, whose timeStamp the share's timeline starts from. */
+  onClick: (event?: { timeStamp: number }) => void;
   tier: Tier;
   pressed?: boolean;
   disabled?: boolean;
@@ -118,7 +119,7 @@ export function Controls({
   onPanel: (key: string) => void;
   onMic: () => void;
   onCam: () => void;
-  onShare: () => void;
+  onShare: (event?: { timeStamp: number }) => void;
   onHand: () => void;
   onAskCamera: () => void;
   onAskScreen: () => void;
@@ -360,9 +361,9 @@ export function Controls({
                       type="button"
                       role="menuitem"
                       disabled={item.disabled}
-                      onClick={() => {
+                      onClick={(event) => {
                         setMenuOpen(false);
-                        item.onClick();
+                        item.onClick(event);
                       }}
                       className={cn(
                         'flex w-full items-center gap-3 px-3.5 py-2.5 text-start text-[13px] text-white/90 transition-colors hover:bg-white/10 disabled:opacity-40',

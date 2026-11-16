@@ -16,6 +16,11 @@ export function useAttachedTrack(
   participant: Participant,
   source: Track.Source,
   videoRef: RefObject<HTMLVideoElement | null>,
+  /**
+   * Shown until the publication has a track: the teacher's own screen, as
+   * captured, while the server has not yet confirmed the share.
+   */
+  fallback?: Track | null,
 ): void {
   useEffect(() => {
     const video = videoRef.current;
@@ -23,7 +28,8 @@ export function useAttachedTrack(
 
     const attach = () => {
       const pub: TrackPublication | undefined = participant.getTrackPublication(source);
-      if (pub?.track) pub.track.attach(video);
+      const track = pub?.track ?? fallback;
+      if (track) track.attach(video);
     };
     attach();
 
@@ -32,6 +38,7 @@ export function useAttachedTrack(
       window.clearInterval(id);
       const pub = participant.getTrackPublication(source);
       pub?.track?.detach(video);
+      fallback?.detach(video);
     };
-  }, [participant, source, videoRef]);
+  }, [participant, source, videoRef, fallback]);
 }

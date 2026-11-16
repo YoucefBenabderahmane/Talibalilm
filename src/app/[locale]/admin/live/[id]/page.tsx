@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { BackLink } from '@/components/admin/BackLink';
 import { Badge } from '@/components/ui/badge';
 import { LiveSessionControls } from '@/components/admin/LiveSessionControls';
+import { ScreenShareCheck } from '@/components/admin/ScreenShareCheck';
 import { getLiveSession, listAttendance } from '@/lib/data/live';
 import { requireStaff } from '@/lib/auth/guards';
 import type { LiveStatus } from '@/lib/supabase/database.types';
@@ -76,6 +77,10 @@ export default async function AdminLiveSessionPage({
           status={session.status}
         />
       </div>
+
+      {/* Chrome's share window, timed outside the class: run it in another tab
+          during a class to tell a slow class from a slow Chrome. */}
+      <ScreenShareCheck />
 
       {/* The log. A class that happened leaves its attendance behind, and
           "who was there, at what time" is the question the office actually

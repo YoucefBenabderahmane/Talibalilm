@@ -72,6 +72,7 @@ export function Stage({
   annotate,
   cursorFeed,
   onCursor,
+  localShare,
 }: {
   room: Room;
   people: RoomPerson[];
@@ -98,6 +99,8 @@ export function Stage({
   cursorFeed?: CursorFeed;
   /** The teacher's stage: tells the class where her pointer is. */
   onCursor?: (position: CursorPosition | null) => void;
+  /** Her own screen as captured, shown before the server has confirmed the share. */
+  localShare?: Track | null;
 }) {
   const t = useTranslations('live');
   const byIdentity = (identity: string): Participant | undefined =>
@@ -139,6 +142,7 @@ export function Stage({
                   participant={p}
                   person={sharer}
                   source={Track.Source.ScreenShare}
+                  track={sharer.isLocal ? localShare : undefined}
                   record="main"
                   className="size-full rounded-none bg-black ring-0"
                 />

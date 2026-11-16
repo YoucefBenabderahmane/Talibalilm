@@ -7,13 +7,22 @@ import {
   Room,
   RoomEvent,
   Track,
-  VideoPresets,
+  type LocalTrack,
   type LocalTrackPublication,
+  type LocalVideoTrack,
   type Participant,
   type RemoteParticipant,
 } from 'livekit-client';
 import { TrackSource as ProtoTrackSource } from '@livekit/protocol';
 import { newlyAllowed, type RoomAbilities } from '@/lib/live/abilities';
+import { roomOptions, startScreenShare } from '@/lib/live/media';
+import {
+  classifyShareError,
+  shareSteps,
+  slowestStep,
+  type ShareOutcome,
+  type ShareStamps,
+} from '@/lib/live/share-timeline';
 import {
   acceptFrom,
   decodeMessage,
@@ -67,25 +76,9 @@ interface Options {
 }
 
 export function useRoom({ roomToken, isHost, onMessage }: Options) {
-  const room = useMemo(
-    () =>
-      new Room({
-        // The lesson is watched on phone screens as often as on a laptop, so
-        // the server sends each viewer a layer it can actually take. 720p is
-        // the capture ceiling: enough to read a shared document, and the one
-        // this platform can afford to carry for a class.
-        adaptiveStream: true,
-        dynacast: true,
-        videoCaptureDefaults: { resolution: VideoPresets.h720.resolution },
-        audioCaptureDefaults: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-        publishDefaults: { simulcast: true },
-      }),
-    [],
-  );
+  // What the teacher sends, and why, lives in lib/live/media.ts: her upload
+  // is the limit a full class runs into.
+  const room = useMemo(() => new Room(roomOptions()), []);
   const [status, setStatus] = useState<RoomStatus>('connecting');
   const [error, setError] = useState<string | null>(null);
   /** The underlying failure, shown to staff and logged. Never guessed at. */
@@ -95,6 +88,21 @@ export function useRoom({ roomToken, isHost, onMessage }: Options) {
   const [micOn, setMicOn] = useState(false);
   const [camOn, setCamOn] = useState(false);
   const [sharing, setSharing] = useState(false);
+  /**
+   * Her screen as captured, shown on her own stage before the server has
+   * confirmed the publish. LiveKit lists a track only once it is published,
+   * which on a busy upload is seconds after she picked the screen.
+   */
+  const [localShare, setLocalShare] = useState<LocalVideoTrack | null>(null);
+  const localShareRef = useRef<LocalVideoTrack | null>(null);
+  /** Every track the capture produced (the screen, and its sound if shared). */
+  const capturedRef = useRef<readonly LocalTrack[]>([]);
+  /**
+   * The last share's timeline, and how it ended: what the room shows the
+   * person sharing, so a slow start names the step that was slow.
+   */
+  const [shareReport, setShareReport] = useState<ShareReport | null>(null);
+  const shareStampsRef = useRef<ShareStamps | null>(null);
   const [handUp, setHandUp] = useState(false);
   const [abilities, setAbilities] = useState<RoomAbilities | null>(null);
 
@@ -136,7 +144,8 @@ export function useRoom({ roomToken, isHost, onMessage }: Options) {
         isLocal: p === room.localParticipant,
         micOn: p.isMicrophoneEnabled,
         camOn: p.isCameraEnabled,
-        sharing: p.isScreenShareEnabled,
+        sharing:
+          p.isScreenShareEnabled || (p === room.localParticipant && localShareRef.current !== null),
         speaking: p.isSpeaking,
         handUp: handsRef.current.get(p.identity) ?? false,
         asking: asksRef.current.get(p.identity) ?? null,
@@ -262,8 +271,21 @@ export function useRoom({ roomToken, isHost, onMessage }: Options) {
       .on(RoomEvent.TrackUnmuted, snapshot)
       .on(RoomEvent.ActiveSpeakersChanged, snapshot)
       .on(RoomEvent.LocalTrackPublished, onLocalTrack)
+      // The class receiving it: the server subscribed someone to her share.
+      .on(RoomEvent.LocalTrackSubscribed, (pub: LocalTrackPublication) => {
+        if (pub.source !== Track.Source.ScreenShare) return;
+        const stamps = shareStampsRef.current;
+        if (!stamps || stamps.received !== null) return;
+        stamps.received = performance.now();
+        setShareReport((report) => report && { ...report, stamps: { ...stamps } });
+      })
       .on(RoomEvent.LocalTrackUnpublished, (pub) => {
-        if (pub.source === Track.Source.ScreenShare) setSharing(false);
+        if (pub.source === Track.Source.ScreenShare) {
+          setSharing(false);
+          localShareRef.current = null;
+          capturedRef.current = [];
+          setLocalShare(null);
+        }
         if (pub.source === Track.Source.Camera) setCamOn(false);
         if (pub.source === Track.Source.Microphone) setMicOn(false);
         snapshot();
@@ -334,15 +356,87 @@ export function useRoom({ roomToken, isHost, onMessage }: Options) {
     }
   }, [room]);
 
-  const toggleShare = useCallback(async () => {
-    const next = !room.localParticipant.isScreenShareEnabled;
-    try {
-      await room.localParticipant.setScreenShareEnabled(next, { audio: true });
-      setSharing(next);
-    } catch {
-      /* Refused or no screen: leave the button as it was. */
-    }
-  }, [room]);
+  /**
+   * Start or stop sharing the screen.
+   *
+   * `clickedAt` is the click's own timeStamp, so the timeline can tell a page
+   * that was too busy to run the click from Chrome being slow to answer.
+   */
+  const toggleShare = useCallback(
+    async (clickedAt?: number) => {
+      const handled = performance.now();
+      const forget = () => {
+        localShareRef.current = null;
+        capturedRef.current = [];
+        setLocalShare(null);
+      };
+      if (room.localParticipant.isScreenShareEnabled || localShareRef.current) {
+        try {
+          if (room.localParticipant.isScreenShareEnabled) {
+            await room.localParticipant.setScreenShareEnabled(false);
+          } else {
+            // Stopped before the server confirmed it: nothing is published
+            // yet, and ending the capture makes the publish withdraw itself.
+            for (const track of capturedRef.current) track.stop();
+          }
+        } catch {
+          /* Already gone. */
+        }
+        forget();
+        setSharing(false);
+        snapshot();
+        return;
+      }
+
+      const stamps: ShareStamps = {
+        clicked: typeof clickedAt === 'number' && clickedAt > 0 ? clickedAt : null,
+        handled,
+        requested: null,
+        chosen: null,
+        published: null,
+        received: null,
+      };
+      shareStampsRef.current = stamps;
+      setShareReport({ stamps: { ...stamps }, outcome: 'pending' });
+      try {
+        await startScreenShare(
+          room,
+          (track, tracks) => {
+            // On her stage the moment she has picked the screen.
+            localShareRef.current = track;
+            capturedRef.current = tracks;
+            setLocalShare(track);
+            setSharing(true);
+            snapshot();
+          },
+          stamps,
+        );
+        stamps.published = performance.now();
+        setShareReport({ stamps: { ...stamps }, outcome: 'started' });
+        const steps = shareSteps(stamps);
+        if (slowestStep(steps)) {
+          // The browser has no reportError (that seam is server-only): the
+          // readout on screen is the report, and this line is for F12.
+          console.warn('[partage] démarrage lent', JSON.stringify(steps));
+        }
+      } catch (error) {
+        // Never silent: a refusal used to leave the button as it was with no
+        // word, and she clicked again and again. Closing the picker is the
+        // one case that says nothing, because it is her own choice.
+        const { outcome, detail } = classifyShareError(error);
+        forget();
+        setSharing(false);
+        snapshot();
+        setShareReport({ stamps: { ...stamps }, outcome, detail });
+        if (outcome !== 'cancelled') {
+          console.warn('[partage]', outcome, detail, JSON.stringify(shareSteps(stamps)));
+        }
+      }
+    },
+    [room, snapshot],
+  );
+
+  const clearShareReport = useCallback(() => setShareReport(null), []);
 
   const raiseHand = useCallback(
     (up: boolean) => {
@@ -393,6 +487,9 @@ export function useRoom({ roomToken, isHost, onMessage }: Options) {
     micOn,
     camOn,
     sharing,
+    localShare,
+    shareReport,
+    clearShareReport,
     handUp,
     abilities,
     send,
@@ -404,4 +501,12 @@ export function useRoom({ roomToken, isHost, onMessage }: Options) {
     raiseHand,
     clearAsk,
   };
+}
+
+/** The last screen share: its timeline and how it ended (`pending` while it starts). */
+export interface ShareReport {
+  stamps: ShareStamps;
+  outcome: ShareOutcome | 'pending';
+  /** The browser's own words, when it refused or failed. */
+  detail?: string;
 }
