@@ -23,9 +23,12 @@ export function SharePip({
   person,
   canExpand,
   onExpand,
+  localShare,
 }: {
   room: Room;
   person: RoomPerson;
+  /** The teacher's own screen as captured, before the server has confirmed it. */
+  localShare?: Track | null;
   canExpand: boolean;
   onExpand: () => void;
 }) {
@@ -41,6 +44,7 @@ export function SharePip({
         participant={participant}
         person={person}
         source={Track.Source.ScreenShare}
+        track={person.isLocal ? localShare : undefined}
         record="pip"
         className="aspect-video w-full rounded-xl ring-0"
       />

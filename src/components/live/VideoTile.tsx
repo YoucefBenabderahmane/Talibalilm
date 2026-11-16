@@ -25,10 +25,13 @@ export function VideoTile({
   source = Track.Source.Camera,
   className,
   record,
+  track,
 }: {
   participant: Participant;
   person: RoomPerson;
   source?: Track.Source;
+  /** Shown until the publication has its track (the teacher's own screen, just captured). */
+  track?: Track | null;
   className?: string;
   /**
    * Marks this tile as part of the recording. `main` is what the lesson is on;
@@ -40,7 +43,7 @@ export function VideoTile({
   const t = useTranslations('live');
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  useAttachedTrack(participant, source, videoRef);
+  useAttachedTrack(participant, source, videoRef, track);
 
   const initials = (person.name || '?')
     .split(/\s+/)

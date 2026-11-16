@@ -29,6 +29,7 @@ import { RemoteAudio } from './RemoteAudio';
 import { useSlideUpload } from './useSlideUpload';
 import { downloadsSettled, useRecorder } from './useRecorder';
 import { RecorderNotices } from './RecorderNotices';
+import { ShareNotice } from './ShareNotice';
 import { useLiveDeck } from './useLiveDeck';
 import { useSlideBroadcast } from './useSlideBroadcast';
 import { CanvasHost } from './CanvasHost';
@@ -1274,6 +1275,10 @@ export function Classroom({
         />
       )}
 
+      {/* How the last screen share went: a refusal is never silent, and a
+          slow start names the step that was slow. */}
+      <ShareNotice report={live.shareReport} staff={isHost} onDismiss={live.clearShareReport} />
+
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           {/* The recorder reads its picture from inside here, so whatever is on
@@ -1296,6 +1301,7 @@ export function Classroom({
                     person={sharer}
                     canExpand={isHost}
                     onExpand={() => setSharePip(false)}
+                    localShare={live.localShare}
                   />
                 )}
                 <button
@@ -1312,6 +1318,7 @@ export function Classroom({
               <Stage
                 room={live.room}
                 people={live.people}
+                localShare={live.localShare}
                 presenting={presenting}
                 slide={stageSlide}
                 canPresent={isHost}
@@ -1357,12 +1364,15 @@ export function Classroom({
               onPanel={(key) => togglePanel(key as Tab)}
               onMic={() => void live.toggleMic()}
               onCam={() => void live.toggleCam()}
-              onShare={() => {
+              onShare={(event) => {
+                // Chrome is asked first, before any of the room's own
+                // bookkeeping, and with the click's own time so the timeline
+                // can tell a busy page from a slow picker.
+                void live.toggleShare(event?.timeStamp);
                 // A share started while the class is reading a slide or the
                 // board begins in the corner; with nothing else on stage it
                 // takes the stage, as it always has.
                 setSharePip(slideRef.current >= 0 || boardOnStage);
-                void live.toggleShare();
               }}
               onHand={() => live.raiseHand(!live.handUp)}
               onAskCamera={() => live.send({ t: 'ask', what: 'camera' })}
