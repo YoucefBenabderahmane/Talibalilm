@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/server';
 import { supabaseConfigured } from '@/lib/env';
 import { requireStaff } from '@/lib/auth/guards';
 import type { AdminState } from '@/app/actions/admin';
+import type { AttendanceStatus } from '@/lib/live/attendance';
 import { errorDetail } from '@/lib/supabase/error-detail';
 import { reportError } from '@/lib/observability/report';
 import { applyPermissions, evictParticipant } from '@/lib/live/server';
@@ -442,4 +443,83 @@ export async function endLiveSessionById(sessionId: string): Promise<AdminState>
   // it was still closing. The room navigates to /admin/live with a full page
   // load right after, which reads the list fresh anyway.
   return OK;
+}
+
+/** A correction's result: on success, the mark now stored (null: none). */
+export interface AttendanceMarkState extends AdminState {
+  mark?: AttendanceStatus | null;
+}
+
+const markSchema = z.object({
+  sessionId: z.string().uuid(),
+  userId: z.string().uuid(),
+  // `auto` removes the correction: the class goes back to the automatic answer.
+  status: z.enum(['present', 'absent', 'excused', 'auto']),
+});
+
+/**
+ * Correct one student's attendance at one class.
+ *
+ * The room records who opened it online. A student who followed the class on
+ * site never appears there, and one whose connection failed did attend as far
+ * as the school is concerned — so the teacher's word has to be able to stand
+ * against the record, or the site tells those students they were absent and
+ * nobody can put it right.
+ *
+ * Through the ordinary client: the policies on `live_attendance_marks` are
+ * what let staff write and refuse everyone else, and they require the
+ * correction to be signed by the caller. Choosing "automatique" deletes the
+ * row rather than storing a fourth state, so there is never a correction that
+ * says nothing.
+ */
+export async function setAttendanceMark(
+  _prev: AttendanceMarkState,
+  formData: FormData,
+): Promise<AttendanceMarkState> {
+  const parsed = markSchema.safeParse({
+    sessionId: formData.get('sessionId'),
+    userId: formData.get('userId'),
+    status: formData.get('status'),
+  });
+  if (!parsed.success) return { ok: false, error: 'invalid' };
+  const { sessionId, userId, status } = parsed.data;
+
+  if (!supabaseConfigured) return { ok: false, error: 'unavailable' };
+  const viewer = await requireStaff();
+  const supabase = await createClient();
+
+  const { error } =
+    status === 'auto'
+      ? await supabase
+          .from('live_attendance_marks')
+          .delete()
+          .eq('session_id', sessionId)
+          .eq('user_id', userId)
+      : await supabase.from('live_attendance_marks').upsert(
+          {
+            session_id: sessionId,
+            user_id: userId,
+            status,
+            marked_by: viewer.id,
+            marked_at: new Date().toISOString(),
+          },
+          { onConflict: 'session_id,user_id' },
+        );
+
+  if (error) {
+    reportError('live.attendanceMark', error, { sessionId, userId, status });
+    return {
+      ok: false,
+      error: error.code === '42501' ? 'notAdmin' : 'saveFailed',
+      detail: errorDetail(error),
+    };
+  }
+
+  // No revalidatePath, deliberately. With it, the answer carries a re-render
+  // of the whole class page, and React 19 as shipped with Next 15.5 can lose
+  // the wake-up for a block of that stream: the correction was saved, but
+  // the teacher's buttons stayed disabled on the old answer until a reload
+  // (reproduced on a production build, about one click in two). The roll
+  // updates from this result instead, so nothing waits on a re-render.
+  return { ok: true, mark: status === 'auto' ? null : status };
 }

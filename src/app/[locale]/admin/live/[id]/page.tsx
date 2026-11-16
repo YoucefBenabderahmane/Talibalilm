@@ -3,7 +3,10 @@ import { notFound } from 'next/navigation';
 import { BackLink } from '@/components/admin/BackLink';
 import { Badge } from '@/components/ui/badge';
 import { LiveSessionControls } from '@/components/admin/LiveSessionControls';
+import { AttendanceRoll } from '@/components/admin/AttendanceRoll';
 import { getLiveSession, listAttendance } from '@/lib/data/live';
+import { sessionRoll } from '@/lib/data/attendance';
+import { errorDetail } from '@/lib/supabase/error-detail';
 import { requireStaff } from '@/lib/auth/guards';
 import type { LiveStatus } from '@/lib/supabase/database.types';
 import { requireLocale } from '@/i18n/routing';
@@ -31,7 +34,21 @@ export default async function AdminLiveSessionPage({
   const session = await getLiveSession(id);
   if (!session) notFound();
 
-  const attendance = await listAttendance(id);
+  // The roll is for a class that has begun: before that nobody is expected,
+  // and a cancelled class was not held. Read with the log, not after it.
+  const started = session.status === 'live' || session.status === 'ended';
+  const [attendance, roll] = await Promise.all([
+    listAttendance(id),
+    started
+      ? sessionRoll({
+          id: session.id,
+          classId: session.classId,
+          status: session.status,
+          startedAt: session.startedAt,
+          endedAt: session.endedAt,
+        })
+      : Promise.resolve(null),
+  ]);
 
   const when = new Intl.DateTimeFormat(locale, { dateStyle: 'full', timeStyle: 'short' });
   // The log is read to the second: "he joined at 18:31:04" settles an argument
@@ -76,6 +93,22 @@ export default async function AdminLiveSessionPage({
           status={session.status}
         />
       </div>
+
+      {/* Who was missing — the question the log below cannot answer, because
+          an absent student is the one with no line in it. */}
+      {roll && (
+        <AttendanceRoll
+          sessionId={session.id}
+          session={{
+            status: session.status,
+            startedAt: session.startedAt,
+            endedAt: session.endedAt,
+          }}
+          roll={roll}
+          locale={locale}
+          marksDetail={roll.marksError ? errorDetail(roll.marksError) : undefined}
+        />
+      )}
 
       {/* The log. A class that happened leaves its attendance behind, and
           "who was there, at what time" is the question the office actually

@@ -2,6 +2,7 @@ import { getTranslations, setRequestLocale } from 'next-intl/server';
 import { notFound, redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 import { Classroom } from '@/components/live/Classroom';
+import { Link } from '@/i18n/navigation';
 import {
   getLiveSessionByToken,
   listSlides,
@@ -91,6 +92,19 @@ export default async function LiveRoomPage({
               ? t('closedBodyStaff')
               : t('closedBody')}
           </p>
+          {/* This page has no header: without a way back, the link to a class
+              that is over was a dead end. A student lands where their past
+              classes — and whether they attended — are listed. */}
+          <Link
+            href={
+              viewer.role === 'admin' || viewer.role === 'instructor' ? '/admin/live' : '/dashboard'
+            }
+            className="mt-6 inline-flex rounded-full border border-white/25 px-5 py-2.5 text-[12px] font-medium text-white transition-colors hover:bg-white/10"
+          >
+            {viewer.role === 'admin' || viewer.role === 'instructor'
+              ? t('backToAdmin')
+              : t('backToSpace')}
+          </Link>
         </div>
       </main>
     );
