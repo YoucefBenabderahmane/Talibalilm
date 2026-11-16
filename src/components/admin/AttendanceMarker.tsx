@@ -1,14 +1,13 @@
 'use client';
 
-import { useActionState } from 'react';
+import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { ActionError } from '@/components/admin/ActionError';
-import { setAttendanceMark } from '@/app/actions/live';
-import type { AdminState } from '@/app/actions/admin';
+import { setAttendanceMark, type AttendanceMarkState } from '@/app/actions/live';
 import type { AttendanceStatus } from '@/lib/live/attendance';
 import { cn } from '@/lib/utils';
 
-const EMPTY: AdminState = { ok: true };
+const EMPTY: AttendanceMarkState = { ok: true };
 
 const CHOICES = ['present', 'absent', 'excused', 'auto'] as const;
 type Choice = (typeof CHOICES)[number];
@@ -28,41 +27,72 @@ const LABEL = {
  * force is the pressed one, so the screen always shows whether an answer is
  * the teacher's or the record's.
  *
- * A form posting to a server action: the button that was pressed carries the
- * choice, and the write goes through RLS — the policy is what makes this a
- * staff-only act, not the fact that the button is on an admin screen.
+ * The write goes through RLS: the policy is what makes this a staff-only act,
+ * not the fact that the button is on an admin screen.
+ *
+ * Called from the click, not through `<form action>` and `useActionState`.
+ * Those tie the busy state to a router transition, and a transition that
+ * React loses track of leaves the buttons disabled for good (see
+ * `setAttendanceMark`). Here the busy state is this component's own, and it
+ * ends when the database has answered.
  */
 export function AttendanceMarker({
   sessionId,
   userId,
   name,
   mark,
+  onSaved,
 }: {
   sessionId: string;
   userId: string;
   /** For the buttons' accessible names: "Marquer Amina présente". */
   name: string;
   mark: AttendanceStatus | null;
+  /** Called with the mark the database now holds for this student. */
+  onSaved: (userId: string, mark: AttendanceStatus | null) => void;
 }) {
   const t = useTranslations('admin');
-  const [state, action, pending] = useActionState(setAttendanceMark, EMPTY);
+  const [state, setState] = useState<AttendanceMarkState>(EMPTY);
+  const [pending, setPending] = useState(false);
   const current: Choice = mark ?? 'auto';
 
+  async function choose(choice: Choice) {
+    if (pending || choice === current) return;
+    setPending(true);
+    const form = new FormData();
+    form.set('sessionId', sessionId);
+    form.set('userId', userId);
+    form.set('status', choice);
+    try {
+      const result = await setAttendanceMark(EMPTY, form);
+      setState(result);
+      if (result.ok) onSaved(userId, result.mark ?? null);
+    } catch (error) {
+      // The request itself failed (network, server down). Say so, with what
+      // the browser reported, rather than leaving the old answer looking saved.
+      setState({
+        ok: false,
+        error: 'saveFailed',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setPending(false);
+    }
+  }
+
   return (
-    <form action={action}>
-      <input type="hidden" name="sessionId" value={sessionId} />
-      <input type="hidden" name="userId" value={userId} />
+    <div>
       <div
         role="group"
         aria-label={t('rollCorrectFor', { name })}
+        aria-busy={pending}
         className="inline-flex flex-wrap overflow-hidden rounded-full border border-line bg-white"
       >
         {CHOICES.map((choice) => (
           <button
             key={choice}
-            type="submit"
-            name="status"
-            value={choice}
+            type="button"
+            onClick={() => choose(choice)}
             disabled={pending}
             aria-pressed={current === choice}
             className={cn(
@@ -79,6 +109,6 @@ export function AttendanceMarker({
         ))}
       </div>
       <ActionError state={state} className="mt-1" />
-    </form>
+    </div>
   );
 }

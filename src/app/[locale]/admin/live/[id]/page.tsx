@@ -99,6 +99,11 @@ export default async function AdminLiveSessionPage({
       {roll && (
         <AttendanceRoll
           sessionId={session.id}
+          session={{
+            status: session.status,
+            startedAt: session.startedAt,
+            endedAt: session.endedAt,
+          }}
           roll={roll}
           locale={locale}
           marksDetail={roll.marksError ? errorDetail(roll.marksError) : undefined}

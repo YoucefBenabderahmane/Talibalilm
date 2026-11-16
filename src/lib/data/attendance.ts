@@ -154,6 +154,8 @@ export interface RollRow {
   joinedAt: string | null;
   /** The teacher's correction, when there is one. */
   mark: AttendanceStatus | null;
+  /** When they entered the group: the roll re-applies the rule after a correction. */
+  memberSince: string | null;
   /**
    * The answer for a class that was held. Null while the class is still
    * running, and for a student who entered the group after it and did not
@@ -248,6 +250,7 @@ export async function sessionRoll(session: {
         name: names.get(member.user_id) ?? '',
         joinedAt,
         mark,
+        memberSince: member.joined_at,
         attendance: resolveAttendance({
           session: sessionState,
           joined: joinedAt !== null,

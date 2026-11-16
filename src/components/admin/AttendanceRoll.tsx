@@ -1,20 +1,7 @@
 import { useTranslations } from 'next-intl';
-import { Badge } from '@/components/ui/badge';
-import { AttendanceMarker } from '@/components/admin/AttendanceMarker';
+import { AttendanceRollTable } from '@/components/admin/AttendanceRollTable';
 import type { SessionRoll } from '@/lib/data/attendance';
-import type { AttendanceStatus } from '@/lib/live/attendance';
-
-const TONE: Record<AttendanceStatus, 'success' | 'danger' | 'muted'> = {
-  present: 'success',
-  absent: 'danger',
-  excused: 'muted',
-};
-
-const LABEL = {
-  present: 'rollPresent',
-  absent: 'rollAbsent',
-  excused: 'rollExcused',
-} as const satisfies Record<AttendanceStatus, string>;
+import type { AttendanceSession } from '@/lib/live/attendance';
 
 /**
  * The roll of one class: every student of its group, present or not, with the
@@ -31,11 +18,13 @@ const LABEL = {
  */
 export function AttendanceRoll({
   sessionId,
+  session,
   roll,
   locale,
   marksDetail,
 }: {
   sessionId: string;
+  session: AttendanceSession;
   roll: SessionRoll;
   locale: string;
   /** What the database said when the corrections could not be read. */
@@ -74,70 +63,22 @@ export function AttendanceRoll({
         </p>
       ) : (
         <>
-          {roll.held && (
-            <p className="mt-4 text-[13px] font-medium text-ink" data-testid="roll-totals">
-              {t('rollTotals', {
-                present: roll.summary.present,
-                absent: roll.summary.absent,
-                excused: roll.summary.excused,
-              })}
-            </p>
-          )}
-
-          <div className="mt-3 overflow-x-auto rounded-[var(--radius-card)] border border-line">
-            <table className="w-full min-w-[620px] border-collapse text-[13px]">
-              <thead>
-                <tr className="bg-surface/60 text-left text-[11px] tracking-wide text-ink-muted uppercase">
-                  <th className="p-3 font-medium">{t('colStudent')}</th>
-                  <th className="p-3 font-medium">{t('colStatus')}</th>
-                  <th className="p-3 font-medium">{t('rollCorrection')}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line">
-                {roll.rows.map((row) => {
-                  // While the class runs there is no "absent" yet — only who
-                  // has arrived. A correction already written still shows.
-                  const status: AttendanceStatus | null = roll.held
-                    ? (row.attendance?.status ?? null)
-                    : (row.mark ?? (row.joinedAt ? 'present' : null));
-                  const corrected = row.mark !== null;
-                  const name = row.name || t('liveGuest');
-                  return (
-                    <tr key={row.userId} data-user={row.userId} data-status={status ?? 'none'}>
-                      <td className="p-3 text-ink">{name}</td>
-                      <td className="p-3">
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                          {status ? (
-                            <Badge variant={TONE[status]}>{t(LABEL[status])}</Badge>
-                          ) : (
-                            <span className="text-[12px] text-ink-muted">
-                              {roll.held ? t('rollNotCounted') : t('rollNotYet')}
-                            </span>
-                          )}
-                          {corrected && (
-                            <span className="text-[11px] text-ink-muted">{t('rollCorrected')}</span>
-                          )}
-                          {row.joinedAt && (
-                            <span className="text-[11px] text-ink-muted tabular-nums">
-                              {t('rollArrivedAt', { time: time.format(new Date(row.joinedAt)) })}
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="p-3">
-                        <AttendanceMarker
-                          sessionId={sessionId}
-                          userId={row.userId}
-                          name={name}
-                          mark={row.mark}
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          {/* Keyed on the stored marks: when the page is re-read, the
+              database's answer replaces what the table remembered. */}
+          <AttendanceRollTable
+            key={roll.rows.map((row) => row.mark ?? '-').join()}
+            sessionId={sessionId}
+            session={session}
+            held={roll.held}
+            rows={roll.rows.map((row) => ({
+              userId: row.userId,
+              name: row.name,
+              joinedAt: row.joinedAt,
+              arrivedAt: row.joinedAt ? time.format(new Date(row.joinedAt)) : null,
+              mark: row.mark,
+              memberSince: row.memberSince,
+            }))}
+          />
 
           <p className="mt-3 max-w-2xl text-[11px] leading-relaxed text-ink-muted">
             {t('rollLimit')}

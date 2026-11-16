@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/server';
 import { supabaseConfigured } from '@/lib/env';
 import { requireStaff } from '@/lib/auth/guards';
 import type { AdminState } from '@/app/actions/admin';
+import type { AttendanceStatus } from '@/lib/live/attendance';
 import { errorDetail } from '@/lib/supabase/error-detail';
 import { reportError } from '@/lib/observability/report';
 import { applyPermissions, evictParticipant } from '@/lib/live/server';
@@ -444,6 +445,11 @@ export async function endLiveSessionById(sessionId: string): Promise<AdminState>
   return OK;
 }
 
+/** A correction's result: on success, the mark now stored (null: none). */
+export interface AttendanceMarkState extends AdminState {
+  mark?: AttendanceStatus | null;
+}
+
 const markSchema = z.object({
   sessionId: z.string().uuid(),
   userId: z.string().uuid(),
@@ -467,9 +473,9 @@ const markSchema = z.object({
  * says nothing.
  */
 export async function setAttendanceMark(
-  _prev: AdminState,
+  _prev: AttendanceMarkState,
   formData: FormData,
-): Promise<AdminState> {
+): Promise<AttendanceMarkState> {
   const parsed = markSchema.safeParse({
     sessionId: formData.get('sessionId'),
     userId: formData.get('userId'),
@@ -509,6 +515,11 @@ export async function setAttendanceMark(
     };
   }
 
-  revalidatePath('/[locale]/admin/live/[id]', 'page');
-  return OK;
+  // No revalidatePath, deliberately. With it, the answer carries a re-render
+  // of the whole class page, and React 19 as shipped with Next 15.5 can lose
+  // the wake-up for a block of that stream: the correction was saved, but
+  // the teacher's buttons stayed disabled on the old answer until a reload
+  // (reproduced on a production build, about one click in two). The roll
+  // updates from this result instead, so nothing waits on a re-render.
+  return { ok: true, mark: status === 'auto' ? null : status };
 }
