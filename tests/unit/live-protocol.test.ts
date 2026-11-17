@@ -6,6 +6,7 @@ import {
   participantIsHost,
   type BoardOp,
   type RoomMessage,
+  type RoomMessageKind,
 } from '@/lib/live/protocol';
 
 const round = (m: RoomMessage) => decodeMessage(encodeMessage(m));
@@ -80,6 +81,39 @@ describe('decodeMessage — everything on the wire is another browser’s word',
       stage: null,
     });
     expect(round({ t: 'ended' })).toEqual({ t: 'ended' });
+  });
+
+  it('decodes every kind of message the room can send', () => {
+    // One example per kind, and the type makes the list complete: a new kind
+    // added to RoomMessage without an example here fails the type check. The
+    // teacher's pointer shipped with its type and its host-only rule but no
+    // decoding, so every position was dropped on arrival and the students
+    // never saw it; a list like this one would have refused it.
+    const everyKind: { [K in RoomMessageKind]: Extract<RoomMessage, { t: K }> } = {
+      chat: { t: 'chat', body: 'salam' },
+      hand: { t: 'hand', up: true },
+      ask: { t: 'ask', what: 'camera' },
+      sync: { t: 'sync' },
+      board: { t: 'board', op: { t: 'stroke', pts: [0, 0, 1, 1], color: '#000', w: 4 } },
+      'board-clear': { t: 'board-clear' },
+      slide: { t: 'slide', i: 2, live: true },
+      rec: { t: 'rec', on: true },
+      deck: { t: 'deck' },
+      focus: { t: 'focus', tab: 'slides', sharePip: false },
+      cursor: { t: 'cursor', x: 0.4213, y: 0.0875 },
+      'cursor-off': { t: 'cursor-off' },
+      ended: { t: 'ended' },
+    };
+    for (const message of Object.values(everyKind)) expect(round(message)).toEqual(message);
+  });
+
+  it('places the teacher’s pointer anywhere on the page, and nowhere else', () => {
+    expect(round({ t: 'cursor', x: 0, y: 1 })).toEqual({ t: 'cursor', x: 0, y: 1 });
+    const wire = (body: string) => decodeMessage(new TextEncoder().encode(body));
+    expect(wire('{"t":"cursor","x":1.5,"y":0.2}')).toBeNull();
+    expect(wire('{"t":"cursor","x":-0.1,"y":0.2}')).toBeNull();
+    expect(wire('{"t":"cursor","x":"0.5","y":0.2}')).toBeNull();
+    expect(wire('{"t":"cursor","x":0.5}')).toBeNull();
   });
 
   it('round-trips the eraser as a stroke that erases', () => {
