@@ -145,6 +145,11 @@ export function encodeMessage(message: RoomMessage): Uint8Array<ArrayBuffer> {
  * dropped rather than thrown, because one peer sending nonsense must not take
  * the classroom down for everyone else.
  */
+/** A finite number from 0 to 1: a position on the page. */
+function isFraction(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
 export function decodeMessage(payload: Uint8Array): RoomMessage | null {
   if (payload.byteLength > MAX_BYTES) return null;
   try {
@@ -204,6 +209,15 @@ export function decodeMessage(payload: Uint8Array): RoomMessage | null {
           ...(stage === undefined ? {} : { stage }),
         };
       }
+      case 'cursor': {
+        // A point on the page, as fractions of it (see normalizePoint): the
+        // teacher's browser never sends one outside 0–1, so nothing else is.
+        const { x, y } = parsed as { x?: unknown; y?: unknown };
+        if (!isFraction(x) || !isFraction(y)) return null;
+        return { t: 'cursor', x, y };
+      }
+      case 'cursor-off':
+        return { t: 'cursor-off' };
       case 'ended':
         return { t: 'ended' };
       default:
