@@ -7,6 +7,7 @@
  * the camera as a `data-record` video; slides are added as images on demand.
  */
 import { openChunkStore } from '@/lib/live/recording/chunk-store';
+import { makeWebmSeekable } from '@/lib/media/webm-seek';
 import {
   downloadsSettled,
   RecordingSession,
@@ -42,6 +43,13 @@ interface Harness {
   addSlide(src: string, cors: boolean): Promise<void>;
   videoMuted(): boolean | null;
   duration(url: string): Promise<number>;
+  /** The file as the upload screen sends it: indexed (lib/media/webm-seek.ts). */
+  prepare(url: string): Promise<{ status: string; durationMs?: number; cues?: number; url: string }>;
+  /** Load a file in a player; optionally jump, and report where the picture is. */
+  player(
+    url: string,
+    seekTo?: number,
+  ): Promise<{ duration: number; seekableEnd: number | null; frameAt?: number }>;
   pending(): Promise<{ id: string; chunks: number; bytes: number }[]>;
   recover(id: string): Promise<{ bytes: number; url: string } | null>;
 }
@@ -198,6 +206,45 @@ window.harness = {
     video.currentTime = 1e9;
     await new Promise((r) => (video.ontimeupdate = r));
     return video.duration;
+  },
+
+  async prepare(url) {
+    const blob = await (await fetch(url)).blob();
+    const prepared = await makeWebmSeekable(blob);
+    return {
+      status: prepared.status,
+      durationMs: prepared.durationMs,
+      cues: prepared.cues,
+      url: URL.createObjectURL(prepared.blob),
+    };
+  },
+
+  async player(url, seekTo) {
+    // What the lesson player sees: a <video> on the page, nothing computed for it.
+    const video = document.createElement('video');
+    video.muted = true;
+    video.preload = 'metadata';
+    video.style.width = '320px';
+    document.body.appendChild(video);
+    try {
+      video.src = url;
+      await new Promise((r) => video.addEventListener('loadedmetadata', r, { once: true }));
+      const duration = video.duration;
+      const seekableEnd = video.seekable.length ? video.seekable.end(0) : null;
+      if (seekTo === undefined) return { duration, seekableEnd };
+      // A jump, then the first picture drawn at the place jumped to.
+      const seeked = new Promise((r) => video.addEventListener('seeked', r, { once: true }));
+      video.currentTime = seekTo;
+      await seeked;
+      const frameAt = await new Promise<number>((resolve) => {
+        video.requestVideoFrameCallback((_, metadata) => resolve(metadata.mediaTime));
+        void video.play().catch(() => {});
+      });
+      video.pause();
+      return { duration, seekableEnd, frameAt };
+    } finally {
+      video.remove();
+    }
   },
 
   async pending() {

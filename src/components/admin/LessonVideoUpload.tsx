@@ -13,6 +13,7 @@ import {
   VIDEO_ACCEPT,
 } from '@/lib/media/video';
 import { PartUploadError, uploadParts } from '@/lib/media/part-upload';
+import { makeWebmSeekable } from '@/lib/media/webm-seek';
 import {
   abortLessonVideoUpload,
   finishLessonVideoUpload,
@@ -35,6 +36,13 @@ interface Pending {
   name: string;
   size: number;
   lastModified: number;
+  /**
+   * The size of what is actually sent: a recording is indexed first, and the
+   * indexed file is a little larger than the one chosen. Parts sent from other
+   * bytes — an upload begun before recordings were indexed — must never be
+   * joined to these.
+   */
+  sendSize?: number;
 }
 
 const pendingKey = (lessonId: string, classId: string) =>
@@ -147,6 +155,21 @@ export function LessonVideoUpload({
     setPlayback(null);
   }, [uploaded]);
 
+  /**
+   * The video playing has no duration: a recording uploaded before recordings
+   * were indexed. The player cannot jump in it, and only sending the file
+   * again fixes that — so the teacher is told, on the video concerned.
+   */
+  const [unseekable, setUnseekable] = useState(false);
+  useEffect(() => {
+    setUnseekable(false);
+  }, [playback]);
+
+  /** Indexing the recording before it is sent, in percent. */
+  const [preparing, setPreparing] = useState<number | null>(null);
+  /** The file went up unindexed: why, in the indexer's words. */
+  const [sentAsIs, setSentAsIs] = useState<string | null>(null);
+
   const watch = async () => {
     setOpening(true);
     const result = await signLessonVideoPlayback({ lessonId, classId });
@@ -179,6 +202,7 @@ export function LessonVideoUpload({
     async (file: File) => {
       setState(IDLE);
       setResumed(false);
+      setSentAsIs(null);
 
       // Refused here rather than after an hour of uploading. The server
       // checks the MEASURED size afterwards regardless — this is a courtesy,
@@ -199,6 +223,34 @@ export function LessonVideoUpload({
       if (!(await playableHere(file)) && !window.confirm(t('videoUnplayableConfirm'))) return;
       const contentType = kind === 'webm' ? 'video/webm' : 'video/mp4';
 
+      const cancel = new AbortController();
+      cancelRef.current = cancel;
+
+      // A recording made in the browser — the class's own « Enregistrer »
+      // included — has no duration and no index, and the player cannot jump
+      // in it. Both are written here, on her machine, in a few seconds; the
+      // picture and sound are not touched (lib/media/webm-seek.ts). A file the
+      // indexer does not recognise goes up exactly as it was.
+      let body: Blob = file;
+      let asIs: string | null = null;
+      if (kind === 'webm') {
+        setPreparing(0);
+        try {
+          const prepared = await makeWebmSeekable(file, {
+            signal: cancel.signal,
+            onProgress: (read, total) => setPreparing(Math.floor((read / total) * 100)),
+          });
+          body = prepared.blob;
+          if (prepared.status === 'not-understood') asIs = prepared.detail ?? '';
+        } catch {
+          // Only « Annuler » lands here, and nothing has been sent yet.
+          cancelRef.current = null;
+          return;
+        } finally {
+          setPreparing(null);
+        }
+      }
+
       // The same file, begun before a reload or a failure: carry on from the
       // parts R2 already holds.
       let pending = readPending(lessonId, classId);
@@ -209,6 +261,14 @@ export function LessonVideoUpload({
           pending.size !== file.size ||
           pending.lastModified !== file.lastModified)
       ) {
+        pending = null;
+      }
+      // An upload begun before recordings were indexed sent the file as chosen.
+      if (pending && (pending.sendSize ?? pending.size) !== body.size) {
+        // Begun from other bytes (the file before it was indexed): its parts
+        // cannot be joined to these. Thrown away; the upload starts afresh.
+        void abortLessonVideoUpload({ lessonId, key: pending.key, uploadId: pending.uploadId });
+        writePending(lessonId, classId, null);
         pending = null;
       }
       if (pending) {
@@ -229,9 +289,10 @@ export function LessonVideoUpload({
           lessonId,
           classId,
           contentType,
-          size: file.size,
+          size: body.size,
         });
         if (!ticket.ok || !ticket.key || !ticket.uploadId || !ticket.partSize) {
+          cancelRef.current = null;
           setState(ticket);
           return;
         }
@@ -242,17 +303,16 @@ export function LessonVideoUpload({
           name: file.name,
           size: file.size,
           lastModified: file.lastModified,
+          sendSize: body.size,
         };
         writePending(lessonId, classId, pending);
       }
       const upload = pending;
 
-      const cancel = new AbortController();
-      cancelRef.current = cancel;
       setPercent(0);
       try {
         await uploadParts({
-          file,
+          file: body,
           partSize: upload.partSize,
           done,
           sign: async (parts) => {
@@ -298,12 +358,15 @@ export function LessonVideoUpload({
         classId,
         key: upload.key,
         uploadId: upload.uploadId,
-        parts: partCount(file.size, upload.partSize),
+        parts: partCount(body.size, upload.partSize),
       });
       // Joined (or refused for its content): either way there is nothing left
       // to resume. A missing part keeps the upload for the next try.
       if (result.ok || result.error !== 'uploadFailed') writePending(lessonId, classId, null);
-      if (result.ok) setUploaded({ bytes: file.size, at: new Date().toISOString() });
+      if (result.ok) {
+        setUploaded({ bytes: body.size, at: new Date().toISOString() });
+        setSentAsIs(asIs);
+      }
       setState(result);
     },
     [lessonId, classId, t],
@@ -334,7 +397,18 @@ export function LessonVideoUpload({
           is minted on demand and lives an hour; closing the player forgets it. */}
       {playback && (
         <div className="mt-3 overflow-hidden rounded-[var(--radius-input)] border border-line bg-black">
-          <video src={playback} controls preload="metadata" className="block aspect-video w-full" />
+          <video
+            src={playback}
+            controls
+            preload="metadata"
+            className="block aspect-video w-full"
+            onLoadedMetadata={(event) => setUnseekable(!Number.isFinite(event.currentTarget.duration))}
+          />
+          {unseekable && (
+            <p role="status" className="bg-gold-50 px-3 py-2 text-[12px] leading-relaxed text-gold-700">
+              {t('videoNotSeekable')}
+            </p>
+          )}
           <div className="flex justify-end bg-surface px-2 py-1">
             <button
               type="button"
@@ -360,18 +434,24 @@ export function LessonVideoUpload({
         }}
       />
 
-      {percent !== null ? (
+      {preparing !== null || percent !== null ? (
         <div className="mt-3">
           <div className="h-2 w-full overflow-hidden rounded-full bg-line">
             <div
               className="h-full bg-brand-500 transition-[width]"
-              style={{ width: `${percent}%` }}
+              style={{ width: `${preparing ?? percent}%` }}
             />
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
             <p className="text-[11px] text-ink-muted" role="status">
-              {t('videoUploading', { percent })}
-              {resumed && ` · ${t('videoResumed')}`}
+              {preparing !== null ? (
+                t('videoPreparing', { percent: preparing })
+              ) : (
+                <>
+                  {t('videoUploading', { percent: percent ?? 0 })}
+                  {resumed && ` · ${t('videoResumed')}`}
+                </>
+              )}
             </p>
             {waiting && (
               <p className="text-[11px] text-gold-700" role="status">
@@ -381,7 +461,10 @@ export function LessonVideoUpload({
             <button
               type="button"
               onClick={() => {
-                if (window.confirm(t('videoCancelConfirm'))) cancelRef.current?.abort();
+                // Nothing has been sent while the file is being prepared.
+                if (preparing !== null || window.confirm(t('videoCancelConfirm'))) {
+                  cancelRef.current?.abort();
+                }
               }}
               className="ms-auto inline-flex items-center gap-1 text-[11px] text-ink-muted hover:text-red-600"
             >
@@ -476,6 +559,19 @@ export function LessonVideoUpload({
         <p role="status" className="mt-2 text-[11px] text-brand-600">
           {t('saved')}
         </p>
+      )}
+      {/* Online, but not indexed: said, with the indexer's own reason. */}
+      {sentAsIs !== null && (
+        <div className="mt-2">
+          <p role="status" className="text-[11px] text-gold-700">
+            {t('videoSentAsIs')}
+          </p>
+          {sentAsIs && (
+            <pre className="mt-1 overflow-x-auto rounded-[var(--radius-input)] border border-gold-300 bg-gold-50/60 p-2 text-[11px] leading-relaxed break-words whitespace-pre-wrap text-gold-700">
+              {sentAsIs}
+            </pre>
+          )}
+        </div>
       )}
     </div>
   );
