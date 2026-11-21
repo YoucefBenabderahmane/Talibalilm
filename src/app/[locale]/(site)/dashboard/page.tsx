@@ -12,7 +12,13 @@ import { NotificationsToggle } from '@/components/notifications/NotificationsTog
 import { CheckoutProfileForm } from '@/components/checkout/CheckoutProfileForm';
 import { UpcomingClasses } from '@/components/live/UpcomingClasses';
 import { requireViewer } from '@/lib/auth/guards';
-import { daysRemaining, getCourseProgress, getEntitlements } from '@/lib/data/learning';
+import {
+  daysRemaining,
+  getCourseProgress,
+  getEntitlements,
+  getMyCourseIds,
+} from '@/lib/data/learning';
+import { courseProgress, resumeLesson } from '@/lib/learn/path';
 import { listCourses } from '@/lib/data/courses';
 import { listCursus } from '@/lib/data/commerce';
 import { avatarUrl, getStudentProfile, isApproved } from '@/lib/data/profile';
@@ -54,13 +60,25 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
   const tProfile = await getTranslations('profile');
   const tCourses = await getTranslations('courses');
 
-  // Courses this student has opened, most recent first. Enrolment is a
-  // bookmark rather than a gate, so an empty list is normal for a new member.
-  // Read together with everything else that needs only the viewer: it used
-  // to wait for all of them first, for no reason.
+  // The student's modules: the ones they HOLD, asked of the database by the
+  // same gate as the lessons (`my_course_ids`), and the ones they have opened,
+  // most recent first. The list used to be the opened ones alone — enrolment
+  // is a bookmark written on the first lesson visit — so somebody who had just
+  // paid arrived on "vous n'avez encore ouvert aucune formation", with the
+  // module they bought shown only as a line of text under "Mes accès".
+  // Read together with everything else that needs only the viewer.
   const supabase = await createClient();
-  const [profile, entitlements, published, cursusList, approved, plans, paypal, enrollments] =
-    await Promise.all([
+  const [
+    profile,
+    entitlements,
+    published,
+    cursusList,
+    approved,
+    plans,
+    paypal,
+    enrollments,
+    myCourseIds,
+  ] = await Promise.all([
       getStudentProfile(),
       getEntitlements(),
       listCourses(),
@@ -72,8 +90,9 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
         .from('enrollments')
         .select('course_id, last_accessed_at')
         .order('last_accessed_at', { ascending: false })
-        .limit(6)
+        .limit(24)
         .then(({ data }) => data ?? []),
+      getMyCourseIds(),
     ]);
 
   // One overdue installment closes the courses until it is settled. The
@@ -86,14 +105,28 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
   const remaining = daysRemaining(entitlements);
   const isStaff = viewer.role === 'instructor' || viewer.role === 'admin';
 
-  const openedIds = new Set(enrollments.map((e) => e.course_id));
-  const opened = published.filter((c) => openedIds.has(c.id));
-  const suggestions = published.filter((c) => !openedIds.has(c.id)).slice(0, 3);
+  // Opened ones first, in the order they were last read; then the modules
+  // held but not opened yet, in the catalogue's order. `myCourseIds` is null
+  // when the database could not be asked (the function's migration not run):
+  // the list is then the opened ones, as it was, rather than an empty page.
+  const openedRank = new Map(enrollments.map((e, rank) => [e.course_id, rank]));
+  const mine = published
+    .filter((c) => openedRank.has(c.id) || (myCourseIds?.has(c.id) ?? false))
+    .map((course, catalogueRank) => ({ course, catalogueRank }))
+    .sort(
+      (a, b) =>
+        (openedRank.get(a.course.id) ?? Number.MAX_SAFE_INTEGER) -
+          (openedRank.get(b.course.id) ?? Number.MAX_SAFE_INTEGER) ||
+        a.catalogueRank - b.catalogueRank,
+    )
+    .map(({ course }) => course);
+  const mineIds = new Set(mine.map((c) => c.id));
+  const suggestions = published.filter((c) => !mineIds.has(c.id)).slice(0, 3);
 
-  // How far each opened course has got. One read for every lesson the student
-  // has a row for; courses with none simply show an empty bar.
-  const openedLessons = opened.map((course) => courseLessons(course));
-  const progress = await getCourseProgress(openedLessons.flat().map((lesson) => lesson.id));
+  // How far each module has got. One read for every lesson the student has a
+  // row for; modules with none simply show an empty bar.
+  const mineLessons = mine.map((course) => courseLessons(course));
+  const progress = await getCourseProgress(mineLessons.flat().map((lesson) => lesson.id));
 
   const displayName =
     profile?.firstName || profile?.lastName
@@ -180,28 +213,36 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
                 {tProfile('coursesTitle')}
               </h2>
 
-              {opened.length > 0 ? (
+              {mine.length > 0 ? (
                 <ul className="mt-4 grid gap-3 sm:grid-cols-2">
-                  {opened.map((course, index) => {
-                    const lessons = openedLessons[index] ?? [];
-                    const done = lessons.filter((lesson) => progress.has(lesson.id)).length;
-                    const percent = lessons.length > 0 ? Math.round((done / lessons.length) * 100) : 0;
-                    const first = lessons[0];
+                  {mine.map((course, index) => {
+                    const lessons = mineLessons[index] ?? [];
+                    // Finished lessons, by the same rule as the lesson page: a
+                    // lesson the student un-marked has a row and is not done.
+                    const { done, total, percent, complete } = courseProgress(lessons, progress);
+                    // Where the button lands: the next unfinished lesson, not
+                    // lesson 1 every time.
+                    const resume = resumeLesson(lessons, progress);
+                    const courseHref = `/dashboard/courses/${course.slug}`;
                     return (
                       <li
                         key={course.id}
+                        data-testid="my-course"
                         className="flex flex-col rounded-[var(--radius-card)] border border-line bg-white p-4 shadow-card"
                       >
-                        <p className="font-display text-[15px] font-semibold text-ink">
+                        <Link
+                          href={courseHref}
+                          className="font-display text-[15px] font-semibold text-ink transition-colors hover:text-brand-600"
+                        >
                           {course.title}
-                        </p>
+                        </Link>
                         <p className="mt-0.5 text-[11px] text-ink-muted">
-                          {tCourses('card.lessons', { count: lessons.length })}
+                          {tCourses('card.lessons', { count: total })}
                         </p>
 
                         <div className="mt-4">
                           <div className="flex items-center justify-between text-[11px] text-ink-muted">
-                            <span>{tProfile('progress', { done, total: lessons.length })}</span>
+                            <span>{tProfile('progress', { done, total })}</span>
                             <span className="tabular-nums">{percent}%</span>
                           </div>
                           <div
@@ -219,17 +260,31 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
                           </div>
                         </div>
 
-                        {first && (
-                          <div className="mt-4">
-                            <Button asChild size="sm" variant="outline">
+                        {resume && !complete && (
+                          <p className="mt-3 line-clamp-1 text-[12px] text-ink-muted">
+                            {t('nextUp', { title: resume.title })}
+                          </p>
+                        )}
+
+                        <div className="mt-auto pt-4">
+                          {resume ? (
+                            <Button
+                              asChild
+                              size="sm"
+                              variant={done > 0 && !complete ? 'primary' : 'outline'}
+                            >
                               <Link
-                                href={`/dashboard/courses/${course.slug}/lessons/${first.id}`}
+                                href={`/dashboard/courses/${course.slug}/lessons/${resume.id}`}
                               >
-                                {done > 0 ? t('continue') : t('browseCourses')}
+                                {complete ? t('review') : done > 0 ? t('continue') : t('start')}
                               </Link>
                             </Button>
-                          </div>
-                        )}
+                          ) : (
+                            <Button asChild size="sm" variant="outline">
+                              <Link href={courseHref}>{tCourses('card.viewCourse')}</Link>
+                            </Button>
+                          )}
+                        </div>
                       </li>
                     );
                   })}

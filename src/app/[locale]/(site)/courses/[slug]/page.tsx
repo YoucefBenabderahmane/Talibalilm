@@ -319,8 +319,11 @@ export default async function CoursePage({
                   <Link href={`/courses/${course.slug}#classe`}>{t('detail.chooseClass')}</Link>
                 </Button>
               ) : (
+                // The module's own home, where it is resumed from — not lesson
+                // 1 every time. Choosing a group below still lands on the
+                // first lesson: that click is an entry, and stays one.
                 <Button asChild size="lg" variant="gold">
-                  <Link href={enterHref}>{t('detail.openModule')}</Link>
+                  <Link href={`/dashboard/courses/${course.slug}`}>{t('detail.openModule')}</Link>
                 </Button>
               )}
             </div>

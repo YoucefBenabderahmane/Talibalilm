@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { supabaseConfigured } from '@/lib/env';
 import { readDocuments, type LessonDocument } from '@/lib/content/lesson-files';
+import { reportError } from '@/lib/observability/report';
 import type { EntitlementRow, LessonContentRow, ProgressRow } from '@/lib/supabase/database.types';
 
 /**
@@ -89,6 +90,60 @@ export async function getViewerClassId(courseId: string, userId: string): Promis
 }
 
 /**
+ * The published modules this student holds.
+ *
+ * Asked of the database, by the same `has_course_access` the lesson policies
+ * call (`my_course_ids`), so "Mes formations" lists exactly what the paywall
+ * would open — a module bought outright, a year of a cursus, on the clock,
+ * with nothing overdue — without a second copy of that rule living here.
+ *
+ * Null means "could not be asked": the function is missing on a project that
+ * has not run its migration, or the database did not answer. The caller falls
+ * back to the courses the student has opened rather than showing an empty
+ * page, which is what a wrongly empty set would do.
+ */
+export async function getMyCourseIds(): Promise<Set<string> | null> {
+  if (!supabaseConfigured) return null;
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc('my_course_ids');
+  if (error) {
+    reportError('learning.myCourses', error);
+    return null;
+  }
+  return new Set(data ?? []);
+}
+
+/**
+ * Which of these lessons have content for the caller's own group.
+ *
+ * Ids only, and no class id in the question: the policy on
+ * `class_lesson_content` returns a student the rows of the group they sit in
+ * and nothing of another, so the filter is the database's — the same posture
+ * as every other member read here. Not asking for the class also means this
+ * can go out together with the other reads of a page instead of waiting for
+ * the one that finds the group.
+ *
+ * It is what lets the syllabus tell a lesson that can be opened now from one
+ * the school has not published for this group yet. Meaningless for staff,
+ * whom the policy shows every group's rows: the pages do not ask it for them.
+ */
+export async function listGroupLessonIds(lessonIds: string[]): Promise<Set<string>> {
+  if (!supabaseConfigured || lessonIds.length === 0) return new Set();
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('class_lesson_content')
+    .select('lesson_id')
+    .in('lesson_id', lessonIds);
+  if (error) {
+    reportError('learning.groupLessons', error);
+    return new Set();
+  }
+  return new Set((data ?? []).map((row) => row.lesson_id));
+}
+
+/**
  * Everything the reader currently holds, soonest expiry first.
  *
  * RLS returns only their own rows, so there is no `user_id` filter here —
@@ -123,7 +178,9 @@ export async function hasCourseAccess(courseId: string): Promise<boolean> {
   if (!supabaseConfigured) return false;
 
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc('has_course_access', { cid: courseId });
+  const { data, error } = await supabase.rpc('has_course_access', {
+    cid: courseId,
+  });
   if (error) return false;
   return data === true;
 }
@@ -167,12 +224,14 @@ export async function touchEnrollment(courseId: string, userId: string): Promise
   if (!supabaseConfigured) return;
 
   const supabase = await createClient();
-  const { error } = await supabase
-    .from('enrollments')
-    .upsert(
-      { user_id: userId, course_id: courseId, last_accessed_at: new Date().toISOString() },
-      { onConflict: 'user_id,course_id' },
-    );
+  const { error } = await supabase.from('enrollments').upsert(
+    {
+      user_id: userId,
+      course_id: courseId,
+      last_accessed_at: new Date().toISOString(),
+    },
+    { onConflict: 'user_id,course_id' },
+  );
 
   if (error) console.error('[enrollments] touch failed:', error.message);
 }
