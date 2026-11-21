@@ -16,7 +16,7 @@ import {
   getLessonContent,
   getViewerClassId,
   hasCourseAccess,
-  touchEnrollment,
+  prepareEnrollmentTouch,
 } from '@/lib/data/learning';
 import { currentViewer, isStaff } from '@/lib/auth/guards';
 import { supabaseConfigured } from '@/lib/env';
@@ -122,7 +122,9 @@ export default async function LessonPage({
   // The visit is noted after the response has gone out, not before: a write
   // the student never sees must not be a round trip the page waits for.
   if (hasAccess) {
-    after(() => touchEnrollment(course.id, viewer.id));
+    // Prepared during the request (it reads the session cookies, which
+    // `after()` may not), written once the page has gone out.
+    after(await prepareEnrollmentTouch(course.id, viewer.id));
   }
 
   const done = progress.get(lesson.id)?.status === 'completed';

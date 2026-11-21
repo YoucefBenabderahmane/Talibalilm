@@ -120,7 +120,7 @@ test.describe('the module page and who holds it', () => {
     await expect(page.getByText('Ouvrir le module')).toHaveCount(0);
   });
 
-  test('a student who holds it gets the lessons themselves', async ({ page }) => {
+  test('a student who holds it gets the lessons themselves', async ({ page, request }) => {
     await page.goto('/login');
     await page.locator('input[name="email"]').fill(email);
     await page.locator('input[name="password"]').fill(password);
@@ -153,6 +153,23 @@ test.describe('the module page and who holds it', () => {
     // not the lesson's shared content.
     await expect(page.getByText('Support de la classe E2E')).toBeVisible();
     await expect(page.locator('iframe[src*="youtube-nocookie"]')).toBeVisible();
+
+    // And the visit is recorded: the module now has its row in `enrollments`,
+    // which is what orders "Mes formations" by last opened. The write runs in
+    // `after()`, once the page has gone out, where a failure reaches only the
+    // server log and never the screen — so the row is the only proof it ran.
+    await expect
+      .poll(
+        async () => {
+          const rows = await request.get(
+            `${SUPABASE_URL}/rest/v1/enrollments?select=course_id&user_id=eq.${userId}`,
+            { headers: serviceHeaders },
+          );
+          return ((await rows.json()) as unknown[]).length;
+        },
+        { message: 'opening a lesson records the visit', timeout: 10_000 },
+      )
+      .toBe(1);
   });
 });
 
