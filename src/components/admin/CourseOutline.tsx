@@ -46,6 +46,7 @@ export interface OutlineLesson {
   title: string;
   type: string;
   position: number;
+  /** Whole minutes; 0 while nobody knows the lesson's length. */
   minutes: number;
   isPreview: boolean;
   /** The shared row: a public preview's content, and the legacy fallback. */
@@ -258,7 +259,8 @@ function LessonRow({
         >
           <span className="line-clamp-1">{lesson.title}</span>
           <span className="text-[11px] text-ink-muted">
-            {lesson.type} · {lesson.minutes} min
+            {lesson.type}
+            {lesson.minutes > 0 && <> · {lesson.minutes} min</>}
           </span>
         </button>
 
@@ -361,7 +363,8 @@ function LessonRow({
               name="minutes"
               type="number"
               min={0}
-              defaultValue={lesson.minutes}
+              defaultValue={lesson.minutes || ''}
+              hint={t('durationHint')}
             />
           </div>
 
@@ -414,6 +417,7 @@ function LessonRow({
                   bytes={selected?.videoBytes ?? 0}
                   expiresAt={selected?.videoExpiresAt ?? null}
                   uploadedAt={selected?.videoUploadedAt ?? null}
+                  durationMissing={lesson.minutes === 0}
                 />
 
                 {/*

@@ -21,6 +21,7 @@ import { moduleRoutes } from '@/lib/commerce/module-modes';
 import { listLiveSessions } from '@/lib/data/live';
 import { institut } from '@/lib/content/institut';
 import { courseLessons, lessonCount } from '@/lib/content/types';
+import { lessonMinutes } from '@/lib/content/duration';
 import { siteUrl } from '@/lib/env';
 import { requireLocale, routing } from '@/i18n/routing';
 import { cn } from '@/lib/utils';
@@ -69,8 +70,10 @@ export async function generateMetadata({
   };
 }
 
+/** A lesson's length, or nothing when nobody knows it — never « 0 min ». */
 function formatMinutes(t: (key: 'minutes', values: { count: number }) => string, seconds: number) {
-  return t('minutes', { count: Math.round(seconds / 60) });
+  const minutes = lessonMinutes(seconds);
+  return minutes === null ? null : t('minutes', { count: minutes });
 }
 
 /** The three icons under the department block, in the order they are typed. */
