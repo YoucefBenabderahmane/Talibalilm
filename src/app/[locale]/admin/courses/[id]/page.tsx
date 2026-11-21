@@ -16,6 +16,7 @@ import { listClassesWithMembers } from '@/lib/data/classes';
 import { createClient } from '@/lib/supabase/server';
 import { reportError } from '@/lib/observability/report';
 import { requireLocale } from '@/i18n/routing';
+import { lessonMinutes } from '@/lib/content/duration';
 
 /**
  * The course builder — the screen the school lives in.
@@ -171,7 +172,7 @@ export default async function CourseBuilderPage({
           title: l.title,
           type: l.type,
           position: l.position,
-          minutes: Math.round(l.duration_seconds / 60),
+          minutes: lessonMinutes(l.duration_seconds) ?? 0,
           isPreview: l.is_preview,
           content: contentByLesson[l.id]?.content ?? '',
           videoId: contentByLesson[l.id]?.videoId ?? '',

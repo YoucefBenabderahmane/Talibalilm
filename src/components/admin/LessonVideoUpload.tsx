@@ -16,8 +16,10 @@ import { PartUploadError, uploadParts } from '@/lib/media/part-upload';
 import { uploadLane } from '@/lib/media/upload-lane';
 import { makeWebmSeekable } from '@/lib/media/webm-seek';
 import { thrownAction } from '@/components/admin/thrown-action';
+import { videoSeconds } from '@/lib/content/duration';
 import {
   abortLessonVideoUpload,
+  fillLessonDuration,
   finishLessonVideoUpload,
   lessonVideoUploadedParts,
   removeLessonVideo,
@@ -68,31 +70,44 @@ function writePending(lessonId: string, classId: string, pending: Pending | null
   }
 }
 
+interface Probe {
+  playable: boolean;
+  /** The file's own length in whole seconds, or null when it does not say. */
+  seconds: number | null;
+}
+
 /**
- * Can this browser play the file? Asked of a hidden `<video>` before anything
- * is sent: an iPhone's HEVC .mov, for one, is a valid file most PCs cannot
- * show. Undecided after a few seconds counts as yes — this warns, it never
- * blocks on its own.
+ * What this browser makes of the file, asked of a hidden `<video>` before
+ * anything is sent.
+ *
+ * Can it play it? An iPhone's HEVC .mov, for one, is a valid file most PCs
+ * cannot show. Undecided after a few seconds counts as yes — this warns, it
+ * never blocks on its own.
+ *
+ * How long is it? An MP4 says, and that becomes the lesson's « Durée » if it
+ * has none. A recording made in the browser does not (`Infinity`): the indexer
+ * measures it instead.
  */
-function playableHere(file: File): Promise<boolean> {
+function probeHere(file: File): Promise<Probe> {
   return new Promise((resolve) => {
     const video = document.createElement('video');
     const url = URL.createObjectURL(file);
     let settled = false;
-    const done = (ok: boolean) => {
+    const done = (probe: Probe) => {
       if (settled) return;
       settled = true;
       window.clearTimeout(timer);
       video.removeAttribute('src');
       video.load();
       URL.revokeObjectURL(url);
-      resolve(ok);
+      resolve(probe);
     };
-    const timer = window.setTimeout(() => done(true), 8000);
+    const timer = window.setTimeout(() => done({ playable: true, seconds: null }), 8000);
     video.preload = 'metadata';
     video.muted = true;
-    video.onloadedmetadata = () => done(video.videoWidth > 0);
-    video.onerror = () => done(false);
+    video.onloadedmetadata = () =>
+      done({ playable: video.videoWidth > 0, seconds: videoSeconds(video.duration) });
+    video.onerror = () => done({ playable: false, seconds: null });
     video.src = url;
   });
 }
@@ -119,6 +134,7 @@ export function LessonVideoUpload({
   bytes,
   expiresAt,
   uploadedAt,
+  durationMissing = false,
 }: {
   lessonId: string;
   /** The group this recording belongs to. A lesson's video is per class. */
@@ -129,6 +145,8 @@ export function LessonVideoUpload({
   expiresAt: string | null;
   /** ISO date the current file landed, or null when there is none. */
   uploadedAt: string | null;
+  /** The lesson has no « Durée » yet: the player may give it the video's. */
+  durationMissing?: boolean;
 }) {
   const t = useTranslations('admin');
   const locale = useLocale();
@@ -171,6 +189,34 @@ export function LessonVideoUpload({
   const [preparing, setPreparing] = useState<number | null>(null);
   /** The file went up unindexed: why, in the indexer's words. */
   const [sentAsIs, setSentAsIs] = useState<string | null>(null);
+  /** The video is in place but its length could not be given to the lesson. */
+  const [durationState, setDurationState] = useState<AdminState>(IDLE);
+
+  /**
+   * The lesson has no length and the player has just read this video's: it
+   * becomes the lesson's « Durée ». So a video uploaded before uploads filled
+   * it in gets its length the first time it is watched here — asked once, and
+   * written only into an empty field (the server checks that too).
+   */
+  const durationAsked = useRef(false);
+  const fillFromPlayer = (raw: number) => {
+    const seconds = videoSeconds(raw);
+    if (!durationMissing || seconds === null || durationAsked.current) return;
+    durationAsked.current = true;
+    const failed = (result: AdminState) => {
+      durationAsked.current = false;
+      setDurationState(result);
+    };
+    fillLessonDuration({ lessonId, seconds }).then(
+      (result) => {
+        if (!result.ok) failed(result);
+      },
+      (error: unknown) => {
+        const thrown = thrownAction(error);
+        failed(thrown.error === 'pageOutdated' ? thrown : { ...thrown, error: 'durationNotSaved' });
+      },
+    );
+  };
 
   const watch = async () => {
     setOpening(true);
@@ -208,6 +254,7 @@ export function LessonVideoUpload({
       setState(IDLE);
       setResumed(false);
       setSentAsIs(null);
+      setDurationState(IDLE);
 
       // Refused here rather than after an hour of uploading. The server
       // checks the MEASURED size afterwards regardless — this is a courtesy,
@@ -225,7 +272,8 @@ export function LessonVideoUpload({
         setState({ ok: false, error: 'notAVideo' });
         return;
       }
-      if (!(await playableHere(file)) && !window.confirm(t('videoUnplayableConfirm'))) return;
+      const probe = await probeHere(file);
+      if (!probe.playable && !window.confirm(t('videoUnplayableConfirm'))) return;
       const contentType = kind === 'webm' ? 'video/webm' : 'video/mp4';
 
       const cancel = new AbortController();
@@ -250,6 +298,9 @@ export function LessonVideoUpload({
         // the indexer does not recognise goes up exactly as it was.
         let body: Blob = file;
         let asIs: string | null = null;
+        // The length the lesson takes if it has none: the file's own, or the
+        // indexer's measure of a recording that had none.
+        let seconds = probe.seconds;
         if (kind === 'webm') {
           setPreparing(0);
           try {
@@ -259,6 +310,9 @@ export function LessonVideoUpload({
             });
             body = prepared.blob;
             if (prepared.status === 'not-understood') asIs = prepared.detail ?? '';
+            if (prepared.durationMs !== undefined) {
+              seconds = videoSeconds(prepared.durationMs / 1000) ?? seconds;
+            }
           } catch {
             // Only « Annuler » lands here, and nothing has been sent yet.
             return;
@@ -386,6 +440,7 @@ export function LessonVideoUpload({
           key: upload.key,
           uploadId: upload.uploadId,
           parts: partCount(body.size, upload.partSize),
+          seconds: seconds ?? undefined,
         });
         // Joined (or refused for its content): either way there is nothing left
         // to resume. A missing part keeps the upload for the next try.
@@ -393,6 +448,9 @@ export function LessonVideoUpload({
         if (result.ok) {
           setUploaded({ bytes: body.size, at: new Date().toISOString() });
           setSentAsIs(asIs);
+          if (result.durationDetail) {
+            setDurationState({ ok: false, error: 'durationNotSaved', detail: result.durationDetail });
+          }
         }
         setState(result);
       } catch (error) {
@@ -441,7 +499,11 @@ export function LessonVideoUpload({
             controls
             preload="metadata"
             className="block aspect-video w-full"
-            onLoadedMetadata={(event) => setUnseekable(!Number.isFinite(event.currentTarget.duration))}
+            onLoadedMetadata={(event) => {
+              const { duration } = event.currentTarget;
+              setUnseekable(!Number.isFinite(duration));
+              fillFromPlayer(duration);
+            }}
           />
           {unseekable && (
             <p role="status" className="bg-gold-50 px-3 py-2 text-[12px] leading-relaxed text-gold-700">
@@ -614,6 +676,8 @@ export function LessonVideoUpload({
           )}
         </div>
       )}
+      {/* Saved, but the lesson did not take the video's length: why. */}
+      <ActionError state={durationState} />
     </div>
   );
 }

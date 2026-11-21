@@ -472,7 +472,10 @@ export async function updateLesson(_prev: AdminState, formData: FormData): Promi
     .update({
       title: parsed.data.title,
       type: parsed.data.type,
-      duration_seconds: parsed.data.minutes * 60,
+      // An empty « Durée » keeps the length the lesson has. Uploads fill it
+      // from the video now, and a form opened before that must not write the
+      // empty field it was showing back over it.
+      ...(parsed.data.minutes > 0 ? { duration_seconds: parsed.data.minutes * 60 } : {}),
       is_preview: parsed.data.is_preview,
     })
     .eq('id', parsed.data.id);

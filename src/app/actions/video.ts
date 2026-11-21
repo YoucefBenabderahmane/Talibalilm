@@ -1,6 +1,6 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, revalidateTag } from 'next/cache';
 import { after } from 'next/server';
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
@@ -22,6 +22,8 @@ import {
 import { reportError } from '@/lib/observability/report';
 import type { AdminState } from '@/app/actions/admin';
 import { errorDetail } from '@/lib/supabase/error-detail';
+import { CATALOGUE_TAG } from '@/lib/data/cache-tags';
+import { MAX_LESSON_SECONDS } from '@/lib/content/duration';
 
 /**
  * A lesson video stored in our own bucket.
@@ -203,13 +205,61 @@ const finishSchema = z.object({
   parts: z.number().int().min(1).max(partCount(MAX_VIDEO_BYTES)),
 });
 
+/**
+ * The video's length, as the teacher's browser read it. Checked on its own,
+ * never inside `finishSchema`: a value out of range is dropped, not a reason to
+ * refuse an upload R2 has already received.
+ */
+const durationSchema = z.number().int().min(1).max(MAX_LESSON_SECONDS);
+
+export interface VideoSaved extends AdminState {
+  /**
+   * The video is saved but its length could not be given to the lesson: what
+   * the database said, for the screen.
+   */
+  durationDetail?: string;
+}
+
+/**
+ * Give a lesson the length of its video, only while it has none.
+ *
+ * « Durée » was only ever what someone typed, and nobody types it for a class
+ * recording, so the editor and the module page read « 0 min » beside a
+ * two-hour video. The condition is in the UPDATE itself: a length someone
+ * typed, or an earlier video gave, is never replaced, and two uploads racing
+ * cannot both write it.
+ */
+async function fillEmptyDuration(
+  supabase: Awaited<ReturnType<typeof staffClient>>,
+  lessonId: string,
+  seconds: number,
+): Promise<{ filled: boolean; detail?: string }> {
+  const { data, error } = await supabase
+    .from('lessons')
+    .update({ duration_seconds: seconds })
+    .eq('id', lessonId)
+    .eq('duration_seconds', 0)
+    .select('id');
+  if (error) {
+    reportError('video.duration', error, { lessonId });
+    return { filled: false, detail: errorDetail(error) };
+  }
+  const filled = data.length > 0;
+  // The module page reads its lessons through the cached catalogue. Only a
+  // real change rebuilds it: most uploads go to a lesson that has a length.
+  if (filled) revalidateTag(CATALOGUE_TAG);
+  return { filled };
+}
+
 export async function finishLessonVideoUpload(input: {
   lessonId: string;
   classId: string;
   key: string;
   uploadId: string;
   parts: number;
-}): Promise<AdminState> {
+  /** The video's length in seconds, when the browser could read it. */
+  seconds?: number;
+}): Promise<VideoSaved> {
   if (!r2Configured) return { ok: false, error: 'storageUnavailable' };
 
   const parsed = finishSchema.safeParse(input);
@@ -291,7 +341,40 @@ export async function finishLessonVideoUpload(input: {
     return { ok: false, error: 'saveFailed', detail: errorDetail(error) };
   }
 
+  // The lesson takes the video's length if it has none. A failure here loses
+  // only that: the video is saved, and the screen shows what the database
+  // answered so the length can be typed instead.
+  const seconds = durationSchema.safeParse(input.seconds);
+  const duration = seconds.success
+    ? await fillEmptyDuration(supabase, lessonId, seconds.data)
+    : { filled: false };
+
   revalidatePath('/[locale]/admin/courses/[id]', 'page');
+  return duration.detail ? { ok: true, durationDetail: duration.detail } : OK;
+}
+
+/**
+ * Give the lesson the length of the video the teacher is watching in
+ * « Regarder ». For the videos that went up before uploads filled it in: the
+ * player reads the length, and the lesson takes it if it still has none.
+ */
+export async function fillLessonDuration(input: {
+  lessonId: string;
+  seconds: number;
+}): Promise<AdminState> {
+  const parsed = z
+    .object({ lessonId: z.string().uuid(), seconds: durationSchema })
+    .safeParse(input);
+  if (!parsed.success) return { ok: false, error: 'invalid' };
+
+  const supabase = await staffClient();
+  const { filled, detail } = await fillEmptyDuration(
+    supabase,
+    parsed.data.lessonId,
+    parsed.data.seconds,
+  );
+  if (detail) return { ok: false, error: 'durationNotSaved', detail };
+  if (filled) revalidatePath('/[locale]/admin/courses/[id]', 'page');
   return OK;
 }
 
