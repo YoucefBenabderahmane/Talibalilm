@@ -156,6 +156,36 @@ test('pause then « Reprendre » records again, and the pause is not in the file
   expect(seconds).toBeLessThan(18);
 });
 
+test('a class recording, prepared for upload, can be skipped through', async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => window.harness.start());
+  await page.waitForTimeout(8_000);
+  await page.evaluate(() => window.harness.stop());
+  const [file] = await page.evaluate(() => window.harness.saved);
+
+  // As Chrome writes it: no duration, so the player's bar cannot be moved —
+  // the teacher could only watch an uploaded lesson from the start.
+  const raw = await page.evaluate((url) => window.harness.player(url), file!.url);
+  expect(raw.duration).toBe(Infinity);
+
+  // As the upload screen sends it: the same pictures, with a duration and an
+  // index (one entry per key frame, about every 3 s).
+  const prepared = await page.evaluate((url) => window.harness.prepare(url), file!.url);
+  expect(prepared.status).toBe('repaired');
+  expect(prepared.cues).toBeGreaterThanOrEqual(2);
+
+  const target = 6;
+  const played = await page.evaluate(
+    ([url, at]) => window.harness.player(url, at),
+    [prepared.url, target] as const,
+  );
+  expect(played.duration).toBeGreaterThan(7);
+  expect(played.duration).toBeLessThan(10);
+  expect(played.seekableEnd).toBeCloseTo(played.duration, 3);
+  // The jump lands where it was asked, and that moment's picture is shown.
+  expect(Math.abs(played.frameAt! - target)).toBeLessThan(1);
+});
+
 test('a recorder that fails mid-lesson saves what it had and says why', async ({ page }) => {
   await open(page);
   await page.evaluate(() => window.harness.start());
