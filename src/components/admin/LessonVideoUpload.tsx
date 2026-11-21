@@ -13,7 +13,9 @@ import {
   VIDEO_ACCEPT,
 } from '@/lib/media/video';
 import { PartUploadError, uploadParts } from '@/lib/media/part-upload';
+import { uploadLane } from '@/lib/media/upload-lane';
 import { makeWebmSeekable } from '@/lib/media/webm-seek';
+import { thrownAction } from '@/components/admin/thrown-action';
 import {
   abortLessonVideoUpload,
   finishLessonVideoUpload,
@@ -188,15 +190,18 @@ export function LessonVideoUpload({
   const [waiting, setWaiting] = useState(false);
   /** Part of the file was already in R2 from an earlier try. */
   const [resumed, setResumed] = useState(false);
+  /** Another upload on the page goes first; this one starts right after. */
+  const [queued, setQueued] = useState(false);
 
-  // Closing the tab mid-upload asks first. (It would resume, but only once the
-  // same file is chosen again.)
+  // Closing the tab mid-upload — or while the file waits its turn, or is being
+  // prepared — asks first. (It would resume, but only once the same file is
+  // chosen again.)
   useEffect(() => {
-    if (percent === null) return;
+    if (percent === null && preparing === null && !queued) return;
     const warn = (event: BeforeUnloadEvent) => event.preventDefault();
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [percent]);
+  }, [percent, preparing, queued]);
 
   const send = useCallback(
     async (file: File) => {
@@ -226,148 +231,182 @@ export function LessonVideoUpload({
       const cancel = new AbortController();
       cancelRef.current = cancel;
 
-      // A recording made in the browser — the class's own « Enregistrer »
-      // included — has no duration and no index, and the player cannot jump
-      // in it. Both are written here, on her machine, in a few seconds; the
-      // picture and sound are not touched (lib/media/webm-seek.ts). A file the
-      // indexer does not recognise goes up exactly as it was.
-      let body: Blob = file;
-      let asIs: string | null = null;
-      if (kind === 'webm') {
-        setPreparing(0);
-        try {
-          const prepared = await makeWebmSeekable(file, {
-            signal: cancel.signal,
-            onProgress: (read, total) => setPreparing(Math.floor((read / total) * 100)),
-          });
-          body = prepared.blob;
-          if (prepared.status === 'not-understood') asIs = prepared.detail ?? '';
-        } catch {
-          // Only « Annuler » lands here, and nothing has been sent yet.
-          cancelRef.current = null;
-          return;
-        } finally {
-          setPreparing(null);
-        }
-      }
-
-      // The same file, begun before a reload or a failure: carry on from the
-      // parts R2 already holds.
-      let pending = readPending(lessonId, classId);
-      let done: number[] = [];
-      if (
-        pending &&
-        (pending.name !== file.name ||
-          pending.size !== file.size ||
-          pending.lastModified !== file.lastModified)
-      ) {
-        pending = null;
-      }
-      // An upload begun before recordings were indexed sent the file as chosen.
-      if (pending && (pending.sendSize ?? pending.size) !== body.size) {
-        // Begun from other bytes (the file before it was indexed): its parts
-        // cannot be joined to these. Thrown away; the upload starts afresh.
-        void abortLessonVideoUpload({ lessonId, key: pending.key, uploadId: pending.uploadId });
-        writePending(lessonId, classId, null);
-        pending = null;
-      }
-      if (pending) {
-        const held = await lessonVideoUploadedParts({
-          lessonId,
-          key: pending.key,
-          uploadId: pending.uploadId,
-        });
-        if (held.ok && held.parts && !held.gone) {
-          done = held.parts;
-          setResumed(done.length > 0);
-        } else {
-          pending = null;
-        }
-      }
-      if (!pending) {
-        const ticket = await startLessonVideoUpload({
-          lessonId,
-          classId,
-          contentType,
-          size: body.size,
-        });
-        if (!ticket.ok || !ticket.key || !ticket.uploadId || !ticket.partSize) {
-          cancelRef.current = null;
-          setState(ticket);
-          return;
-        }
-        pending = {
-          key: ticket.key,
-          uploadId: ticket.uploadId,
-          partSize: ticket.partSize,
-          name: file.name,
-          size: file.size,
-          lastModified: file.lastModified,
-          sendSize: body.size,
-        };
-        writePending(lessonId, classId, pending);
-      }
-      const upload = pending;
-
-      setPercent(0);
+      // One file at a time on the page (lib/media/upload-lane.ts): a PDF sent
+      // while a video was uploading got no bytes through, and was abandoned.
+      let release: () => void;
       try {
-        await uploadParts({
-          file: body,
-          partSize: upload.partSize,
-          done,
-          sign: async (parts) => {
-            const signed = await signLessonVideoParts({
-              lessonId,
-              key: upload.key,
-              uploadId: upload.uploadId,
-              parts,
-            });
-            if (!signed.ok || !signed.urls) {
-              throw new PartUploadError(signed.detail ?? signed.error ?? 'signing failed', 0);
-            }
-            return signed.urls;
-          },
-          onProgress: (sent, total) => setPercent(Math.floor((sent / total) * 100)),
-          onWaiting: setWaiting,
-          signal: cancel.signal,
-        });
-      } catch (cause) {
-        setPercent(null);
-        setWaiting(false);
+        release = await uploadLane.take(cancel.signal, setQueued);
+      } catch {
+        // « Annuler » while waiting its turn: nothing was sent.
         cancelRef.current = null;
-        if (cancel.signal.aborted) {
-          // Cancelled: the parts already sent are thrown away, not kept.
-          writePending(lessonId, classId, null);
-          await abortLessonVideoUpload({ lessonId, key: upload.key, uploadId: upload.uploadId });
-          return;
-        }
-        // Kept: choosing the same file again carries on from here.
-        setState({
-          ok: false,
-          error: 'uploadFailed',
-          detail: `${cause instanceof Error ? cause.message : String(cause)} — ${t('videoResumeHint')}`,
-        });
         return;
       }
 
-      setPercent(null);
-      setWaiting(false);
-      cancelRef.current = null;
-      const result = await finishLessonVideoUpload({
-        lessonId,
-        classId,
-        key: upload.key,
-        uploadId: upload.uploadId,
-        parts: partCount(body.size, upload.partSize),
-      });
-      // Joined (or refused for its content): either way there is nothing left
-      // to resume. A missing part keeps the upload for the next try.
-      if (result.ok || result.error !== 'uploadFailed') writePending(lessonId, classId, null);
-      if (result.ok) {
-        setUploaded({ bytes: body.size, at: new Date().toISOString() });
-        setSentAsIs(asIs);
+      try {
+        // A recording made in the browser — the class's own « Enregistrer »
+        // included — has no duration and no index, and the player cannot jump
+        // in it. Both are written here, on her machine, in a few seconds; the
+        // picture and sound are not touched (lib/media/webm-seek.ts). A file
+        // the indexer does not recognise goes up exactly as it was.
+        let body: Blob = file;
+        let asIs: string | null = null;
+        if (kind === 'webm') {
+          setPreparing(0);
+          try {
+            const prepared = await makeWebmSeekable(file, {
+              signal: cancel.signal,
+              onProgress: (read, total) => setPreparing(Math.floor((read / total) * 100)),
+            });
+            body = prepared.blob;
+            if (prepared.status === 'not-understood') asIs = prepared.detail ?? '';
+          } catch {
+            // Only « Annuler » lands here, and nothing has been sent yet.
+            return;
+          } finally {
+            setPreparing(null);
+          }
+        }
+
+        // The same file, begun before a reload or a failure: carry on from the
+        // parts R2 already holds.
+        let pending = readPending(lessonId, classId);
+        let done: number[] = [];
+        if (
+          pending &&
+          (pending.name !== file.name ||
+            pending.size !== file.size ||
+            pending.lastModified !== file.lastModified)
+        ) {
+          pending = null;
+        }
+        // An upload begun before recordings were indexed sent the file as chosen.
+        if (pending && (pending.sendSize ?? pending.size) !== body.size) {
+          // Begun from other bytes (the file before it was indexed): its parts
+          // cannot be joined to these. Thrown away; the upload starts afresh.
+          void abortLessonVideoUpload({
+            lessonId,
+            key: pending.key,
+            uploadId: pending.uploadId,
+          }).catch(() => {});
+          writePending(lessonId, classId, null);
+          pending = null;
+        }
+        if (pending) {
+          const held = await lessonVideoUploadedParts({
+            lessonId,
+            key: pending.key,
+            uploadId: pending.uploadId,
+          });
+          if (held.ok && held.parts && !held.gone) {
+            done = held.parts;
+            setResumed(done.length > 0);
+          } else {
+            pending = null;
+          }
+        }
+        if (!pending) {
+          const ticket = await startLessonVideoUpload({
+            lessonId,
+            classId,
+            contentType,
+            size: body.size,
+          });
+          if (!ticket.ok || !ticket.key || !ticket.uploadId || !ticket.partSize) {
+            setState(ticket);
+            return;
+          }
+          pending = {
+            key: ticket.key,
+            uploadId: ticket.uploadId,
+            partSize: ticket.partSize,
+            name: file.name,
+            size: file.size,
+            lastModified: file.lastModified,
+            sendSize: body.size,
+          };
+          writePending(lessonId, classId, pending);
+        }
+        const upload = pending;
+
+        setPercent(0);
+        try {
+          await uploadParts({
+            file: body,
+            partSize: upload.partSize,
+            done,
+            sign: async (parts) => {
+              const signed = await signLessonVideoParts({
+                lessonId,
+                key: upload.key,
+                uploadId: upload.uploadId,
+                parts,
+              });
+              if (!signed.ok || !signed.urls) {
+                throw new PartUploadError(signed.detail ?? signed.error ?? 'signing failed', 0);
+              }
+              return signed.urls;
+            },
+            onProgress: (sent, total) => setPercent(Math.floor((sent / total) * 100)),
+            onWaiting: setWaiting,
+            signal: cancel.signal,
+          });
+        } catch (cause) {
+          setPercent(null);
+          setWaiting(false);
+          if (cancel.signal.aborted) {
+            // Cancelled: the parts already sent are thrown away, not kept.
+            writePending(lessonId, classId, null);
+            await abortLessonVideoUpload({
+              lessonId,
+              key: upload.key,
+              uploadId: upload.uploadId,
+            });
+            return;
+          }
+          // A page older than the site cannot have its parts signed: say so.
+          const thrown = thrownAction(cause);
+          setState(
+            thrown.error === 'pageOutdated'
+              ? thrown
+              : {
+                  // Kept: choosing the same file again carries on from here.
+                  ok: false,
+                  error: 'uploadFailed',
+                  detail: `${cause instanceof Error ? cause.message : String(cause)} — ${t('videoResumeHint')}`,
+                },
+          );
+          return;
+        }
+
+        setPercent(null);
+        setWaiting(false);
+        const result = await finishLessonVideoUpload({
+          lessonId,
+          classId,
+          key: upload.key,
+          uploadId: upload.uploadId,
+          parts: partCount(body.size, upload.partSize),
+        });
+        // Joined (or refused for its content): either way there is nothing left
+        // to resume. A missing part keeps the upload for the next try.
+        if (result.ok || result.error !== 'uploadFailed') writePending(lessonId, classId, null);
+        if (result.ok) {
+          setUploaded({ bytes: body.size, at: new Date().toISOString() });
+          setSentAsIs(asIs);
+        }
+        setState(result);
+      } catch (error) {
+        // A server action that threw — a page older than the site, usually —
+        // is said on screen, not lost.
+        setPercent(null);
+        setPreparing(null);
+        setWaiting(false);
+        setState(thrownAction(error));
+      } finally {
+        release();
+        cancelRef.current = null;
+        setQueued(false);
       }
-      setState(result);
     },
     [lessonId, classId, t],
   );
@@ -434,17 +473,19 @@ export function LessonVideoUpload({
         }}
       />
 
-      {preparing !== null || percent !== null ? (
+      {queued || preparing !== null || percent !== null ? (
         <div className="mt-3">
           <div className="h-2 w-full overflow-hidden rounded-full bg-line">
             <div
               className="h-full bg-brand-500 transition-[width]"
-              style={{ width: `${preparing ?? percent}%` }}
+              style={{ width: `${preparing ?? percent ?? 0}%` }}
             />
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
             <p className="text-[11px] text-ink-muted" role="status">
-              {preparing !== null ? (
+              {queued ? (
+                t('uploadQueued')
+              ) : preparing !== null ? (
                 t('videoPreparing', { percent: preparing })
               ) : (
                 <>
@@ -461,8 +502,8 @@ export function LessonVideoUpload({
             <button
               type="button"
               onClick={() => {
-                // Nothing has been sent while the file is being prepared.
-                if (preparing !== null || window.confirm(t('videoCancelConfirm'))) {
+                // Nothing has been sent while the file waits or is prepared.
+                if (queued || preparing !== null || window.confirm(t('videoCancelConfirm'))) {
                   cancelRef.current?.abort();
                 }
               }}

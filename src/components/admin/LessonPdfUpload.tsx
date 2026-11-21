@@ -1,12 +1,15 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { FileText, Trash2, Upload } from 'lucide-react';
+import { FileText, Trash2, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ActionError } from '@/components/admin/ActionError';
+import { thrownAction } from '@/components/admin/thrown-action';
 import { formatBytes } from '@/lib/media/video';
 import { MAX_DOCUMENT_BYTES } from '@/lib/media/document';
+import { PartUploadError, uploadParts, xhrPutWith } from '@/lib/media/part-upload';
+import { uploadLane } from '@/lib/media/upload-lane';
 import {
   finishLessonDocumentUpload,
   removeLessonDocument,
@@ -16,20 +19,32 @@ import type { AdminState } from '@/app/actions/admin';
 import type { LessonDocument } from '@/lib/content/lesson-files';
 
 const IDLE: AdminState = { ok: false };
-/** No data moved for this long: the connection is dead, not slow. */
-const STALL_DEADLINE_MS = 120_000;
+
+/** The upload link is signed for this type: the PUT must send it too. */
+const putPdf = xhrPutWith({ 'Content-Type': 'application/pdf' });
+
+/** The server refused to hand out an upload link: its answer is shown as it is. */
+class TicketRefused extends Error {
+  constructor(readonly state: AdminState) {
+    super(state.error ?? 'refused');
+  }
+}
 
 /**
  * Upload a lesson's support documents straight to R2.
  *
- * `XMLHttpRequest`, not `fetch`, and for the same reason as the video uploader:
- * fetch has no upload-progress event, and a one-gigabyte file with no visible
- * progress is indistinguishable from a hang.
+ * The file goes through the video's uploader (`uploadParts`), as one part.
+ * It used to go in one bare request that gave up for good after two minutes
+ * without progress — and on 20 November a PDF sent while the lesson's video
+ * was uploading got no bytes through for two minutes and was abandoned, while
+ * the video, which retries, carried on. Now the PDF gets the same treatment:
  *
- * The stall deadline is measured BETWEEN progress events, not from the start.
- * A large file on a home uplink is allowed to take an hour; it is not allowed
- * to stop moving. That is the failure the teacher was hitting — a connection
- * that accepted the byte stream and then went quiet.
+ * - it waits its turn: one file at a time on the page (`lib/media/upload-lane.ts`);
+ * - a try that stops moving for a minute is cut and sent again, with a growing
+ *   pause, up to eight tries;
+ * - offline time is waited out, not counted, and said on screen;
+ * - a refused or expired link is replaced by a fresh one;
+ * - it can be cancelled, and closing the tab mid-way asks first.
  *
  * Several documents are allowed. The list shown is the server's, plus anything
  * uploaded or removed in this session, so the entry never disappears between
@@ -49,6 +64,11 @@ export function LessonPdfUpload({
   const inputRef = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<AdminState>(IDLE);
   const [percent, setPercent] = useState<number | null>(null);
+  /** Another upload on the page goes first; this one starts right after. */
+  const [queued, setQueued] = useState(false);
+  /** Offline, or pausing before another try. */
+  const [waiting, setWaiting] = useState(false);
+  const cancelRef = useRef<AbortController | null>(null);
   /** Uploaded or removed in this session, before the server re-render lands. */
   const [added, setAdded] = useState<LessonDocument[]>([]);
   const [removed, setRemoved] = useState<string[]>([]);
@@ -56,6 +76,14 @@ export function LessonPdfUpload({
   const shown = [...documents, ...added]
     .filter((document, index, all) => all.findIndex((d) => d.key === document.key) === index)
     .filter((document) => !removed.includes(document.key));
+
+  // Closing the tab while the file is sent, or waits its turn, asks first.
+  useEffect(() => {
+    if (percent === null && !queued) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [percent, queued]);
 
   const send = useCallback(
     async (file: File) => {
@@ -68,90 +96,94 @@ export function LessonPdfUpload({
         return;
       }
 
-      const ticket = await startLessonDocumentUpload({
-        lessonId,
-        classId,
-        contentType: 'application/pdf',
-        size: file.size,
-      });
-      if (!ticket.ok || !ticket.url || !ticket.key) {
-        setState(ticket);
-        return;
-      }
-
-      setPercent(0);
+      const cancel = new AbortController();
+      cancelRef.current = cancel;
+      let release: () => void;
       try {
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          let idle: ReturnType<typeof setTimeout> | null = null;
-          const arm = () => {
-            if (idle) clearTimeout(idle);
-            idle = setTimeout(() => xhr.abort(), STALL_DEADLINE_MS);
-          };
-
-          xhr.open('PUT', ticket.url!);
-          xhr.setRequestHeader('Content-Type', 'application/pdf');
-          xhr.upload.onprogress = (event) => {
-            if (event.lengthComputable) setPercent(Math.round((event.loaded / event.total) * 100));
-            arm();
-          };
-          xhr.onload = () => {
-            if (idle) clearTimeout(idle);
-            if (xhr.status >= 200 && xhr.status < 300) resolve();
-            else reject(new Error(`R2 answered ${xhr.status}`));
-          };
-          // A CORS refusal and a dropped connection both land here with no
-          // detail — the browser does not tell us which. The message says so,
-          // and names the one test that can tell them apart.
-          xhr.onerror = () => {
-            if (idle) clearTimeout(idle);
-            reject(
-              new Error(
-                'the upload was refused or interrupted — run Admin → Diagnostic → ' +
-                  '« Tester l’envoi depuis le navigateur », which reproduces this ' +
-                  'exact request and names the missing rule',
-              ),
-            );
-          };
-          xhr.onabort = () => {
-            if (idle) clearTimeout(idle);
-            reject(
-              new Error('the upload stalled: no data moved for two minutes, so it was abandoned'),
-            );
-          };
-
-          arm();
-          xhr.send(file);
-        });
-      } catch (cause) {
-        setPercent(null);
-        setState({
-          ok: false,
-          error: 'uploadFailed',
-          detail: cause instanceof Error ? cause.message : String(cause),
-        });
+        release = await uploadLane.take(cancel.signal, setQueued);
+      } catch {
+        // « Annuler » while waiting its turn: nothing was sent.
+        cancelRef.current = null;
         return;
       }
 
-      setPercent(null);
-      const result = await finishLessonDocumentUpload({
-        lessonId,
-        classId,
-        key: ticket.key,
-        filename: file.name,
-      });
-      if (result.ok) {
-        setAdded((list) => [
-          ...list,
-          {
-            key: ticket.key!,
-            filename: file.name,
-            bytes: file.size,
-            uploadedAt: new Date().toISOString(),
-          },
-        ]);
+      try {
+        // Each link names its own key: a link replaced mid-way (expired,
+        // refused) means the file lands under the newest one.
+        let key: string | null = null;
+        setPercent(0);
+        try {
+          await uploadParts({
+            file,
+            partSize: Math.max(1, file.size),
+            concurrency: 1,
+            sign: async () => {
+              const ticket = await startLessonDocumentUpload({
+                lessonId,
+                classId,
+                contentType: 'application/pdf',
+                size: file.size,
+              });
+              if (!ticket.ok || !ticket.url || !ticket.key) throw new TicketRefused(ticket);
+              key = ticket.key;
+              return { 1: ticket.url };
+            },
+            put: putPdf,
+            onProgress: (sent, total) => setPercent(Math.floor((sent / total) * 100)),
+            onWaiting: setWaiting,
+            signal: cancel.signal,
+          });
+        } catch (cause) {
+          // Cancelled: nothing to keep. A file R2 already holds has no row, so
+          // no page can reach it.
+          if (cancel.signal.aborted) return;
+          if (cause instanceof TicketRefused) setState(cause.state);
+          else if (cause instanceof PartUploadError) {
+            setState({
+              ok: false,
+              error: 'uploadFailed',
+              // No answer at all is a dropped connection or a CORS refusal, and
+              // the browser does not say which: name the test that tells them apart.
+              detail:
+                cause.status === 0
+                  ? `${cause.message} — if it happens again, run Admin → Diagnostic → « Tester l’envoi depuis le navigateur », which reproduces this exact request and names the missing rule`
+                  : cause.message,
+            });
+          } else setState(thrownAction(cause));
+          return;
+        } finally {
+          setPercent(null);
+          setWaiting(false);
+        }
+
+        const stored = key as string | null;
+        if (!stored) return;
+        const result = await finishLessonDocumentUpload({
+          lessonId,
+          classId,
+          key: stored,
+          filename: file.name,
+        });
+        if (result.ok) {
+          setAdded((list) => [
+            ...list,
+            {
+              key: stored,
+              filename: file.name,
+              bytes: file.size,
+              uploadedAt: new Date().toISOString(),
+            },
+          ]);
+        }
+        setState(result);
+      } catch (error) {
+        // A server action that threw — a page older than the site, usually.
+        setState(thrownAction(error));
+      } finally {
+        release();
+        cancelRef.current = null;
+        setQueued(false);
       }
-      setState(result);
     },
     [lessonId, classId],
   );
@@ -177,17 +209,32 @@ export function LessonPdfUpload({
         }}
       />
 
-      {percent !== null ? (
+      {percent !== null || queued ? (
         <div className="mt-3">
           <div className="h-2 w-full overflow-hidden rounded-full bg-line">
             <div
               className="h-full bg-brand-500 transition-[width]"
-              style={{ width: `${percent}%` }}
+              style={{ width: `${percent ?? 0}%` }}
             />
           </div>
-          <p className="mt-1.5 text-[11px] text-ink-muted" role="status">
-            {t('pdfUploading', { percent })}
-          </p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <p className="text-[11px] text-ink-muted" role="status">
+              {queued ? t('uploadQueued') : t('pdfUploading', { percent: percent ?? 0 })}
+            </p>
+            {waiting && (
+              <p className="text-[11px] text-gold-700" role="status">
+                {t('videoWaiting')}
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={() => cancelRef.current?.abort()}
+              className="ms-auto inline-flex items-center gap-1 text-[11px] text-ink-muted hover:text-red-600"
+            >
+              <X className="size-3" aria-hidden="true" />
+              {t('videoCancel')}
+            </button>
+          </div>
         </div>
       ) : (
         <div className="mt-3">

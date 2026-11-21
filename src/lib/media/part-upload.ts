@@ -68,40 +68,50 @@ export class PartUploadError extends Error {
   }
 }
 
-/** The default PUT: XMLHttpRequest, for its upload progress, with a stall guard. */
-export const xhrPut: PutPart = (url, body, onProgress, signal) =>
-  new Promise((resolve) => {
-    const xhr = new XMLHttpRequest();
-    let last = Date.now();
-    let settled = false;
-    const finish = (status: number) => {
-      if (settled) return;
-      settled = true;
-      window.clearInterval(watch);
-      signal.removeEventListener('abort', abort);
-      resolve(status);
-    };
-    const abort = () => {
-      xhr.abort();
-      finish(-1);
-    };
-    const watch = window.setInterval(() => {
-      if (Date.now() - last > STALL_MS) {
+/**
+ * A PUT through XMLHttpRequest, for its upload progress, with a stall guard,
+ * sending `headers` as well — a link signed for one content type (a lesson
+ * PDF's) is refused without it.
+ */
+export const xhrPutWith =
+  (headers: Record<string, string> = {}): PutPart =>
+  (url, body, onProgress, signal) =>
+    new Promise((resolve) => {
+      const xhr = new XMLHttpRequest();
+      let last = Date.now();
+      let settled = false;
+      const finish = (status: number) => {
+        if (settled) return;
+        settled = true;
+        window.clearInterval(watch);
+        signal.removeEventListener('abort', abort);
+        resolve(status);
+      };
+      const abort = () => {
         xhr.abort();
-        finish(0);
-      }
-    }, 5_000);
-    xhr.open('PUT', url);
-    xhr.upload.onprogress = (event) => {
-      last = Date.now();
-      onProgress(event.loaded);
-    };
-    xhr.onload = () => finish(xhr.status);
-    xhr.onerror = () => finish(0);
-    xhr.onabort = () => finish(signal.aborted ? -1 : 0);
-    signal.addEventListener('abort', abort, { once: true });
-    xhr.send(body);
-  });
+        finish(-1);
+      };
+      const watch = window.setInterval(() => {
+        if (Date.now() - last > STALL_MS) {
+          xhr.abort();
+          finish(0);
+        }
+      }, 5_000);
+      xhr.open('PUT', url);
+      for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
+      xhr.upload.onprogress = (event) => {
+        last = Date.now();
+        onProgress(event.loaded);
+      };
+      xhr.onload = () => finish(xhr.status);
+      xhr.onerror = () => finish(0);
+      xhr.onabort = () => finish(signal.aborted ? -1 : 0);
+      signal.addEventListener('abort', abort, { once: true });
+      xhr.send(body);
+    });
+
+/** The default PUT: a video part needs no header of its own. */
+export const xhrPut: PutPart = xhrPutWith();
 
 /** Only a browser that says so is offline: an unknown answer is not a reason to wait. */
 function isOffline(): boolean {
